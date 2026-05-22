@@ -1,0 +1,62 @@
+area_kerja_line,kode_asli_sistem,kode_asli_normalized,display_laporan,deskripsi_produk,target_botol_preform,target_thermoforming,target_thermoforming_gw_gt_12,target_printing_non_oz,target_printing_oz_lt_20,target_printing_22_oz,active_target_type,active_target,target_achievement_rate,target_reject_rate
+INJECTION,BORCH 1 PREFORM 42.3 GR,BORCH 1 PREFORM 42.3 GR,Borche 1,Preform 42.3 gram,103680,,,,,,target_botol_preform,103680,0.9,0.03
+INJECTION,BORCH 1 PREFORM 27.5 GR,BORCH 1 PREFORM 27.5 GR,Borche 1,Preform 27.5 gram,218274,,,,,,target_botol_preform,218274,0.9,0.03
+INJECTION,BORCH 1 PREFORM 23 GR,BORCH 1 PREFORM 23 GR,Borche 1,Preform 23.0 gram,218274,,,,,,target_botol_preform,218274,0.9,0.03
+INJECTION,BORCH 1 PREFORM 19 GR,BORCH 1 PREFORM 19 GR,Borche 1,Preform 19.0 / 19.1 gram,218274,,,,,,target_botol_preform,218274,0.9,0.03
+INJECTION,BORCH 2 PREFORM 42.3 GR,BORCH 2 PREFORM 42.3 GR,Borche 2,Preform 42.3 gram,103680,,,,,,target_botol_preform,103680,0.9,0.03
+INJECTION,BORCH 2 PREFORM 27.5 GR,BORCH 2 PREFORM 27.5 GR,Borche 2,Preform 27.5 gram,218274,,,,,,target_botol_preform,218274,0.9,0.03
+INJECTION,BORCH 2 PREFORM 25.8 GR,BORCH 2 PREFORM 25.8 GR,Borche 2,Preform 25.8 gram,129600,,,,,,target_botol_preform,129600,0.9,0.03
+INJECTION,BORCH 2 PREFORM 23 GR,BORCH 2 PREFORM 23 GR,Borche 2,Preform 23.0 gram,218274,,,,,,target_botol_preform,218274,0.9,0.03
+INJECTION,BORCH 2 PREFORM 19 GR,BORCH 2 PREFORM 19 GR,Borche 2,Preform 19.0 / 19.1 gram,218274,,,,,,target_botol_preform,218274,0.9,0.03
+INJECTION,BORCH 2 PREFORM 11.5 GR,BORCH 2 PREFORM 11.5 GR,Borche 2,Preform 11.5 gram,276480,,,,,,target_botol_preform,276480,0.9,0.03
+BLOWING,CHUM POWER 1 BOTOL 600 ML,CHUM POWER 1 BOTOL 600 ML,Chum Power,Botol 600ml,172800,,,,,,target_botol_preform,172800,0.8,0.03
+BLOWING,CHUM POWER 1 BOTOL 200 ML,CHUM POWER 1 BOTOL 200 ML,Chum Power,Botol 200ml,144000,,,,,,target_botol_preform,144000,0.8,0.03
+BLOWING,LONGSUN 1 BOTOL 1500 ML,LONGSUN 1 BOTOL 1500 ML,Longsun,Botol 1500ml,129600,,,,,,target_botol_preform,129600,0.8,0.03
+BLOWING,LONGSUN 1 BOTOL 1000 ML,LONGSUN 1 BOTOL 1000 ML,Longsun,Botol 1000ml,129600,,,,,,target_botol_preform,129600,0.8,0.03
+BLOWING,LONGSUN 1 BOTOL 600 ML,LONGSUN 1 BOTOL 600 ML,Longsun,Botol 600ml,167226,,,,,,target_botol_preform,167226,0.8,0.03
+BLOWING,VFINE BOTOL 1500 ML,VFINE BOTOL 1500 ML,V-FINE,Botol 1500ml,57600,,,,,,target_botol_preform,57600,0.8,0.03
+BLOWING,VFINE BOTOL 600 ML,VFINE BOTOL 600 ML,V-FINE,Botol 600ml,57600,,,,,,target_botol_preform,57600,0.8,0.03
+BLOWING,VFINE BOTOL 580 ML,VFINE BOTOL 580 ML,V-FINE,Botol 580ml,57600,,,,,,target_botol_preform,57600,0.8,0.03
+BLOWING,VFINE BOTOL 400 ML,VFINE BOTOL 400 ML,V-FINE,Botol 400ml,57600,,,,,,target_botol_preform,57600,0.8,0.03
+BLOWING,VFINE BOTOL 330 ML,VFINE BOTOL 330 ML,V-FINE,Botol 330ml,57600,,,,,,target_botol_preform,57600,0.8,0.03
+BLOWING,VFINE BOTOL 250 ML,VFINE BOTOL 250 ML,V-FINE,Botol 250ml,57600,,,,,,target_botol_preform,57600,0.8,0.03
+THERMOFORMING,THERMO HENGFENG-1-OZ,THERMO HENGFENG-1-OZ,Hengfeng 1,Thermoforming Cup OZ,,489600,465120,,,,target_thermoforming,489600,0.8,0.03
+THERMOFORMING,THERMO HENGFENG-1-OZ,THERMO HENGFENG-1-OZ,Hengfeng 1,Thermoforming Cup OZ,,489600,465120,,,,target_thermoforming_gw_gt_12,465120,0.8,0.03
+THERMOFORMING,THERMO HENGFENG-2-OZ,THERMO HENGFENG-2-OZ,Hengfeng 2,Thermoforming Cup OZ,,489600,465120,,,,target_thermoforming,489600,0.8,0.03
+THERMOFORMING,THERMO HENGFENG-2-OZ,THERMO HENGFENG-2-OZ,Hengfeng 2,Thermoforming Cup OZ,,489600,465120,,,,target_thermoforming_gw_gt_12,465120,0.8,0.03
+THERMOFORMING,THERMO 3 HENGFENG-OZ,THERMO 3 HENGFENG-OZ,Hengfeng 1,Thermoforming Cup OZ (Alias Nama Sistem),,489600,465120,,,,target_thermoforming,489600,0.8,0.03
+THERMOFORMING,THERMO 3 HENGFENG-OZ,THERMO 3 HENGFENG-OZ,Hengfeng 1,Thermoforming Cup OZ (Alias Nama Sistem),,489600,465120,,,,target_thermoforming_gw_gt_12,465120,0.8,0.03
+THERMOFORMING,THERMO 4 HENGFENG-OZ,THERMO 4 HENGFENG-OZ,Hengfeng 2,Thermoforming Cup OZ (Alias Nama Sistem),,489600,465120,,,,target_thermoforming,489600,0.8,0.03
+THERMOFORMING,THERMO 4 HENGFENG-OZ,THERMO 4 HENGFENG-OZ,Hengfeng 2,Thermoforming Cup OZ (Alias Nama Sistem),,489600,465120,,,,target_thermoforming_gw_gt_12,465120,0.8,0.03
+THERMOFORMING,THERMO 5 HENGFENG,THERMO 5 HENGFENG,Hengfeng 3,Thermoforming Cup (Alias Nama Sistem),,489600,489600,,,,target_thermoforming,489600,0.8,0.03
+THERMOFORMING,THERMO 5 HENGFENG,THERMO 5 HENGFENG,Hengfeng 3,Thermoforming Cup (Alias Nama Sistem),,489600,489600,,,,target_thermoforming_gw_gt_12,489600,0.8,0.03
+THERMOFORMING,THERMO 6 ILLIG,THERMO 6 ILLIG,Illig 3,Thermoforming Cup (Alias Nama Sistem),,1620000,,,,,target_thermoforming,1620000,0.8,0.03
+THERMOFORMING,THERMO 7 HENGFENG-OZ,THERMO 7 HENGFENG-OZ,Hengfeng 4,Thermoforming Cup OZ (Alias Nama Sistem),,950400,855360,,,,target_thermoforming,950400,0.8,0.03
+THERMOFORMING,THERMO 7 HENGFENG-OZ,THERMO 7 HENGFENG-OZ,Hengfeng 4,Thermoforming Cup OZ (Alias Nama Sistem),,950400,855360,,,,target_thermoforming_gw_gt_12,855360,0.8,0.03
+THERMOFORMING,THERMO HENGFENG-3,THERMO HENGFENG-3,Hengfeng 3,Thermoforming Cup,,489600,489600,,,,target_thermoforming,489600,0.8,0.03
+THERMOFORMING,THERMO HENGFENG-3,THERMO HENGFENG-3,Hengfeng 3,Thermoforming Cup,,489600,489600,,,,target_thermoforming_gw_gt_12,489600,0.8,0.03
+THERMOFORMING,THERMO HENGFENG-4,THERMO HENGFENG-4,Hengfeng 4,Thermoforming Cup,,950400,855360,,,,target_thermoforming,950400,0.8,0.03
+THERMOFORMING,THERMO HENGFENG-4,THERMO HENGFENG-4,Hengfeng 4,Thermoforming Cup,,950400,855360,,,,target_thermoforming_gw_gt_12,855360,0.8,0.03
+THERMOFORMING,THERMO ILLIG-1,THERMO ILLIG-1,Illig 1,Thermoforming Cup,,1620000,,,,,target_thermoforming,1620000,0.8,0.03
+THERMOFORMING,THERMO 1 ILLIG,THERMO 1 ILLIG,Illig 1,Thermoforming Cup (Duplikasi Nama Sistem),,1620000,,,,,target_thermoforming,1620000,0.8,0.03
+THERMOFORMING,THERMO ILLIG-2,THERMO ILLIG-2,Illig 2,Thermoforming Cup,,1620000,,,,,target_thermoforming,1620000,0.8,0.03
+THERMOFORMING,THERMO 2 ILLIG,THERMO 2 ILLIG,Illig 2,Thermoforming Cup (Duplikasi Nama Sistem),,1620000,,,,,target_thermoforming,1620000,0.8,0.03
+THERMOFORMING,THERMO ILLIG-3,THERMO ILLIG-3,Illig 3,Thermoforming Cup,,1620000,,,,,target_thermoforming,1620000,0.8,0.03
+PRINTING,OMSO 1-OZ,OMSO 1-OZ,OMSO 1,Printing Cup OZ,,,,648000,432000,360000,target_printing_non_oz,648000,0.85,0.017
+PRINTING,OMSO 1-OZ,OMSO 1-OZ,OMSO 1,Printing Cup OZ,,,,648000,432000,360000,target_printing_oz_lt_20,432000,0.85,0.017
+PRINTING,OMSO 1-OZ,OMSO 1-OZ,OMSO 1,Printing Cup OZ,,,,648000,432000,360000,target_printing_22_oz,360000,0.85,0.017
+PRINTING,OMSO 2-OZ,OMSO 2-OZ,OMSO 2,Printing Cup OZ,,,,648000,432000,360000,target_printing_non_oz,648000,0.85,0.017
+PRINTING,OMSO 2-OZ,OMSO 2-OZ,OMSO 2,Printing Cup OZ,,,,648000,432000,360000,target_printing_oz_lt_20,432000,0.85,0.017
+PRINTING,OMSO 2-OZ,OMSO 2-OZ,OMSO 2,Printing Cup OZ,,,,648000,432000,360000,target_printing_22_oz,360000,0.85,0.017
+PRINTING,CAI-1,CAI-1,CAI 1,Cup Regular,,,,648000,,,target_printing_non_oz,648000,0.85,0.017
+PRINTING,CAI-2,CAI-2,CAI 2,Cup Regular,,,,648000,,,target_printing_non_oz,648000,0.85,0.017
+PRINTING,POLYPRINT 1 PRINTING-OZ,POLYPRINT 1 PRINTING-OZ,Polyprint 1,Printing Cup OZ,,,,,384000,288000,target_printing_oz_lt_20,384000,0.85,0.017
+PRINTING,POLYPRINT 1 PRINTING-OZ,POLYPRINT 1 PRINTING-OZ,Polyprint 1,Printing Cup OZ,,,,,384000,288000,target_printing_22_oz,288000,0.85,0.017
+PRINTING,POLYPRINT PRINTING-OZ,POLYPRINT PRINTING-OZ,Polyprint 1,Printing Cup OZ (Duplikasi Nama Sistem),,,,,384000,288000,target_printing_oz_lt_20,384000,0.85,0.017
+PRINTING,POLYPRINT PRINTING-OZ,POLYPRINT PRINTING-OZ,Polyprint 1,Printing Cup OZ (Duplikasi Nama Sistem),,,,,384000,288000,target_printing_22_oz,288000,0.85,0.017
+PRINTING,POLYPRINT 2 PRINTING-OZ,POLYPRINT 2 PRINTING-OZ,Polyprint 2,Printing Cup OZ,,,,,384000,288000,target_printing_oz_lt_20,384000,0.85,0.017
+PRINTING,POLYPRINT 2 PRINTING-OZ,POLYPRINT 2 PRINTING-OZ,Polyprint 2,Printing Cup OZ,,,,,384000,288000,target_printing_22_oz,288000,0.85,0.017
+PRINTING,POLYPRINT PRINTING-OZ-2,POLYPRINT PRINTING-OZ-2,Polyprint 2,Printing Cup OZ (Duplikasi Nama Sistem),,,,,384000,288000,target_printing_oz_lt_20,384000,0.85,0.017
+PRINTING,POLYPRINT PRINTING-OZ-2,POLYPRINT PRINTING-OZ-2,Polyprint 2,Printing Cup OZ (Duplikasi Nama Sistem),,,,,384000,288000,target_printing_22_oz,288000,0.85,0.017
+PRINTING,NEWDO-1,NEWDO-1,Newdo 1,Cup Regular,,,,720000,,,target_printing_non_oz,720000,0.85,0.017
+PRINTING,NEWDO-2,NEWDO-2,Newdo 2,Cup Regular,,,,720000,,,target_printing_non_oz,720000,0.85,0.017

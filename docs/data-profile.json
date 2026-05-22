@@ -1,0 +1,137 @@
+{
+  "source_file": "/root/.openclaw/workspace/itemledgerppic_output_last3months.csv",
+  "rows": 5804,
+  "columns": 58,
+  "posting_date_min": "2026-02-13",
+  "posting_date_max": "2026-05-12",
+  "entry_types": [
+    "Output"
+  ],
+  "total_quantity": 227687215.40000045,
+  "unique_documents": 390,
+  "unique_machines": 37,
+  "unique_items": 207,
+  "unique_categories": 9,
+  "top_machines": [
+    {
+      "name": "ILLIG2",
+      "quantity": 25896000.0
+    },
+    {
+      "name": "OMSO2 OZ",
+      "quantity": 15577000.0
+    },
+    {
+      "name": "NEWDO 1 REG",
+      "quantity": 14993925.0
+    },
+    {
+      "name": "NEWDO 2 REG",
+      "quantity": 14697125.0
+    },
+    {
+      "name": "HENGFENG 4 OZ",
+      "quantity": 14413200.0
+    },
+    {
+      "name": "OMSO1 OZ",
+      "quantity": 13157300.0
+    },
+    {
+      "name": "HENGFENG 1 OZ",
+      "quantity": 11760000.0
+    },
+    {
+      "name": "HENGFENG 2 OZ",
+      "quantity": 11415000.0
+    },
+    {
+      "name": "ILLIG3",
+      "quantity": 10910200.0
+    },
+    {
+      "name": "HENGFENG 2 22OZ-12GR",
+      "quantity": 10126000.0
+    }
+  ],
+  "top_categories": [
+    {
+      "name": "JADI-PRINTING",
+      "quantity": 94732328.0
+    },
+    {
+      "name": "JADI-NAT/PUTIH",
+      "quantity": 61848601.0
+    },
+    {
+      "name": "SFG-PUTIH",
+      "quantity": 31384601.0
+    },
+    {
+      "name": "SFG-PREFORM",
+      "quantity": 23581556.0
+    },
+    {
+      "name": "JADI-BOTOL",
+      "quantity": 16022740.0
+    },
+    {
+      "name": "AV-GLIDER",
+      "quantity": 60722.0
+    },
+    {
+      "name": "AV-REJECT",
+      "quantity": 54505.4
+    },
+    {
+      "name": "AV-GUMPALAN",
+      "quantity": 1361.3
+    },
+    {
+      "name": "AV-SAPUAN",
+      "quantity": 800.7
+    }
+  ],
+  "top_lines": [
+    {
+      "name": "THERMO HENGFENG-2-OZ",
+      "quantity": 21445689.6
+    },
+    {
+      "name": "THERMO ILLIG-2",
+      "quantity": 20859644.3
+    },
+    {
+      "name": "OMSO-2-OZ",
+      "quantity": 18037391.7
+    },
+    {
+      "name": "OMSO-1-OZ",
+      "quantity": 15786187.5
+    },
+    {
+      "name": "THERMO HENGFENG-4",
+      "quantity": 14965512.9
+    },
+    {
+      "name": "NEWDO-1",
+      "quantity": 14895203.6
+    },
+    {
+      "name": "NEWDO-2",
+      "quantity": 14798835.7
+    },
+    {
+      "name": "THERMO HENGFENG-1-OZ",
+      "quantity": 11766520.7
+    },
+    {
+      "name": "THERMO ILLIG-3",
+      "quantity": 10912984.8
+    },
+    {
+      "name": "POLYPRINT-1-OZ",
+      "quantity": 8910007.6
+    }
+  ]
+}

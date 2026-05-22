@@ -1,0 +1,84 @@
+{
+  "source_csv": "/root/.openclaw/workspace/projects/ppic-output-dashboard/public/data/master_entity_target_produksi.csv",
+  "rows": 42,
+  "areas": [
+    "BLOWING",
+    "INJECTION",
+    "PRINTING",
+    "SUPPORT",
+    "THERMOFORMING"
+  ],
+  "by_area": {
+    "BLOWING": 11,
+    "INJECTION": 10,
+    "PRINTING": 10,
+    "SUPPORT": 2,
+    "THERMOFORMING": 9
+  },
+  "duplicate_display_codes": [
+    {
+      "area_kerja_line": "THERMOFORMING",
+      "kode_asli_sistem": "THERMO 1 ILLIG",
+      "kode_asli_normalized": "THERMO 1 ILLIG",
+      "display_laporan": "Illig 1",
+      "deskripsi_produk": "Thermoforming Cup (Duplikasi Nama Sistem)",
+      "target_botol_preform": "",
+      "target_thermoforming": "1620000",
+      "target_thermoforming_gw_gt_12": "",
+      "target_printing_non_oz": "",
+      "target_printing_oz_lt_20": "",
+      "target_printing_22_oz": "",
+      "active_target_type": "target_thermoforming",
+      "active_target": "1620000",
+      "target_reject_rate": "0.03"
+    },
+    {
+      "area_kerja_line": "THERMOFORMING",
+      "kode_asli_sistem": "THERMO 2 ILLIG",
+      "kode_asli_normalized": "THERMO 2 ILLIG",
+      "display_laporan": "Illig 2",
+      "deskripsi_produk": "Thermoforming Cup (Duplikasi Nama Sistem)",
+      "target_botol_preform": "",
+      "target_thermoforming": "1620000",
+      "target_thermoforming_gw_gt_12": "",
+      "target_printing_non_oz": "",
+      "target_printing_oz_lt_20": "",
+      "target_printing_22_oz": "",
+      "active_target_type": "target_thermoforming",
+      "active_target": "1620000",
+      "target_reject_rate": "0.03"
+    },
+    {
+      "area_kerja_line": "PRINTING",
+      "kode_asli_sistem": "POLYPRINT PRINTING-OZ",
+      "kode_asli_normalized": "POLYPRINT PRINTING-OZ",
+      "display_laporan": "Polyprint 1",
+      "deskripsi_produk": "Printing Cup OZ (Duplikasi Nama Sistem)",
+      "target_botol_preform": "",
+      "target_thermoforming": "",
+      "target_thermoforming_gw_gt_12": "",
+      "target_printing_non_oz": "",
+      "target_printing_oz_lt_20": "384000",
+      "target_printing_22_oz": "288000",
+      "active_target_type": "target_printing_oz_lt_20",
+      "active_target": "384000",
+      "target_reject_rate": "0.017"
+    },
+    {
+      "area_kerja_line": "PRINTING",
+      "kode_asli_sistem": "POLYPRINT PRINTING-OZ-2",
+      "kode_asli_normalized": "POLYPRINT PRINTING-OZ-2",
+      "display_laporan": "Polyprint 2",
+      "deskripsi_produk": "Printing Cup OZ (Duplikasi Nama Sistem)",
+      "target_botol_preform": "",
+      "target_thermoforming": "",
+      "target_thermoforming_gw_gt_12": "",
+      "target_printing_non_oz": "",
+      "target_printing_oz_lt_20": "384000",
+      "target_printing_22_oz": "288000",
+      "active_target_type": "target_printing_oz_lt_20",
+      "active_target": "384000",
+      "target_reject_rate": "0.017"
+    }
+  ]
+}
