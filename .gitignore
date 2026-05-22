@@ -9,3 +9,4 @@ out
 *.log
 data/*.db
 data/*.db-*
+data/*.bak
