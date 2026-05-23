@@ -66,6 +66,72 @@ Lancar`,
     },
   },
   {
+    name: 'downtime-lancar-zero-duration',
+    text: `23 Mei 2026
+Shift 1
+Borche 02
+Problem
+Lancar`,
+    expect: {
+      parsedRows: 0,
+      structuredRows: 1,
+      warningIncludes: 'state:lancar',
+      condition: 'lancar',
+      startTime: '07:00',
+      endTime: '07:00',
+      durationMinutes: 0,
+    },
+  },
+  {
+    name: 'downtime-off-full-shift',
+    text: `23 Mei 2026
+Shift 3
+V-FINE 1
+Problem
+Off`,
+    expect: {
+      parsedRows: 0,
+      structuredRows: 1,
+      warningIncludes: 'state:off',
+      condition: 'off',
+      startTime: '23:00',
+      endTime: '07:00',
+      durationMinutes: 480,
+    },
+  },
+  {
+    name: 'downtime-duration-inferred-from-shift-start',
+    text: `24 Mei 2026
+Shift 2
+Hengfeng 3
+Problem
+(30 menit) sensor macet di conveyor`,
+    expect: {
+      parsedRows: 1,
+      structuredRows: 1,
+      warningIncludes: 'timing:duration_inferred',
+      condition: 'downtime',
+      startTime: '15:00',
+      endTime: '15:30',
+      durationMinutes: 30,
+    },
+  },
+  {
+    name: 'downtime-raw-machine-review-gate',
+    text: `25 Mei 2026
+Shift 1
+XYZ 99
+Problem
+Macet`,
+    expect: {
+      parsedRows: 1,
+      structuredRows: 1,
+      condition: 'unknown',
+      reviewRequired: true,
+      qualityRisk: 'medium',
+    },
+  },
+  {
     name: 'downtime-ai-reason-action-format',
     text: `21 Mei 2026
 Shift 2
@@ -142,6 +208,27 @@ async function runFixture(fixture) {
   }
   if (fixture.expect.condition && data.rows?.[0]) {
     assert.equal(data.rows[0].condition, fixture.expect.condition, `${fixture.name}: condition`);
+  }
+  if (fixture.expect.startTime) {
+    const targetRow = data.rows?.[0] || data.structuredRows?.[0] || null;
+    const actualStart = targetRow ? (targetRow.start_time || targetRow.start || '') : '';
+    assert.equal(actualStart, fixture.expect.startTime, `${fixture.name}: startTime`);
+  }
+  if (fixture.expect.endTime) {
+    const targetRow = data.rows?.[0] || data.structuredRows?.[0] || null;
+    const actualEnd = targetRow ? (targetRow.end_time || targetRow.end || '') : '';
+    assert.equal(actualEnd, fixture.expect.endTime, `${fixture.name}: endTime`);
+  }
+  if (fixture.expect.durationMinutes !== undefined) {
+    const targetRow = data.rows?.[0] || data.structuredRows?.[0] || null;
+    const actualDuration = targetRow ? (targetRow.duration_minutes ?? targetRow.durasi_menit ?? 0) : 0;
+    assert.equal(actualDuration, fixture.expect.durationMinutes, `${fixture.name}: durationMinutes`);
+  }
+  if (fixture.expect.reviewRequired !== undefined) {
+    assert.equal(Boolean(data.quality?.reviewRequired), fixture.expect.reviewRequired, `${fixture.name}: reviewRequired`);
+  }
+  if (fixture.expect.qualityRisk) {
+    assert.equal(data.quality?.riskLevel, fixture.expect.qualityRisk, `${fixture.name}: quality risk`);
   }
   if (fixture.name === 'downtime-ai-reason-action-format' && data.rows?.[0]) {
     const root = (data.rows[0].root_cause || '').toLowerCase();

@@ -2,6 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { clean, getDb, normalizeCode } from '@/lib/server/db';
 import { loadAppSettings } from '@/lib/server/app-settings';
 import { buildMachineSynonymPack, normalizeMachineAliasText } from '@/lib/dashboard';
+import {
+  addDowntimeWaMinutes as sharedAddDowntimeWaMinutes,
+  deriveDowntimeWaDurationMinutes as sharedDeriveDowntimeWaDurationMinutes,
+  isPlaceholderDowntimeWaTime as sharedIsPlaceholderDowntimeWaTime,
+  normalizeDowntimeWaCondition as sharedNormalizeDowntimeWaCondition,
+  resolveDowntimeWaShiftWindow as sharedResolveDowntimeWaShiftWindow,
+  resolveDowntimeWaTiming as sharedResolveDowntimeWaTiming,
+} from '@/lib/downtime-wa-timing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -74,6 +82,24 @@ type DuplicateHint = {
   duplicate_key: string;
   match_source: string;
   reason: string;
+};
+
+type WaParseQualitySummary = {
+  riskLevel: 'low' | 'medium' | 'high';
+  reviewRequired: boolean;
+  totalRows: number;
+  parsedRows: number;
+  structuredRows: number;
+  productionRows: number;
+  skippedLines: number;
+  aiUsed: boolean;
+  duplicateHintCount: number;
+  rawMachineRows: number;
+  lowConfidenceRows: number;
+  stateRows: number;
+  timingFallbackRows: number;
+  notes: string[];
+  reasons: string[];
 };
 
 type WaStructuredRow = {
@@ -164,32 +190,54 @@ const monthMap: Record<string, string> = {
   desember: '12', des: '12',
 };
 
-const shiftWindows: Record<string, { start: string; end: string }> = {
-  '1': { start: '07:00', end: '15:00' },
-  '2': { start: '15:00', end: '23:00' },
-  '3': { start: '23:00', end: '07:00' },
-};
-
 function resolveShiftWindow(shiftCode: string) {
-  return shiftWindows[shiftNumber(shiftCode)] ?? shiftWindows['1'];
+  return sharedResolveDowntimeWaShiftWindow(shiftCode);
+}
+
+function isPlaceholderTime(value: string | null | undefined) {
+  return sharedIsPlaceholderDowntimeWaTime(value);
+}
+
+function normalizeDowntimeWaCondition(...values: Array<string | undefined | null>) {
+  return sharedNormalizeDowntimeWaCondition(...values);
+}
+
+function resolveDowntimeWaTiming(args: {
+  eventDate: string;
+  shiftCode: string;
+  condition?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  durationMinutes?: number | null;
+}) {
+  return sharedResolveDowntimeWaTiming(args);
 }
 
 function applyShiftWindowFallback(row: ParsedWaDowntimeRow): ParsedWaDowntimeRow {
-  const shiftWindow = resolveShiftWindow(row.shift_code);
-  const startTime = clean(row.start_time) || shiftWindow.start;
-  const endTime = clean(row.end_time) || shiftWindow.end;
-  const usedFallback = startTime !== row.start_time || endTime !== row.end_time;
+  const resolved = resolveDowntimeWaTiming({
+    eventDate: row.event_date,
+    shiftCode: row.shift_code,
+    condition: row.condition || row.root_cause || row.source_line,
+    startTime: row.start_time,
+    endTime: row.end_time,
+    durationMinutes: row.duration_minutes,
+  });
+  const usedFallback =
+    resolved.startTime !== clean(row.start_time)
+    || resolved.endTime !== clean(row.end_time)
+    || resolved.durationMinutes !== row.duration_minutes
+    || resolved.condition !== clean(row.condition).toLowerCase();
   if (!usedFallback) return row;
   const warningCode = mergeCodes(row.warning_code, 'timing:shift_window');
   const warning = mergeCodes(
     row.warning,
-    'Tidak ada jam/durasi eksplisit; memakai rentang shift.',
+    resolved.condition === 'lancar' ? 'Kondisi lancar; durasi dinormalisasi ke 0.' : 'Tidak ada jam/durasi eksplisit; memakai rentang shift.',
   );
   return {
     ...row,
-    start_time: startTime,
-    end_time: endTime,
-    duration_minutes: row.duration_minutes || minutesBetween(row.event_date, startTime, endTime),
+    start_time: resolved.startTime,
+    end_time: resolved.endTime,
+    duration_minutes: resolved.durationMinutes,
     warning,
     warning_code: warningCode,
     idempotency_key: buildDowntimeWaIdempotencyKey({
@@ -200,12 +248,60 @@ function applyShiftWindowFallback(row: ParsedWaDowntimeRow): ParsedWaDowntimeRow
       machine_normalized: row.machine_normalized,
       line: row.line || row.machine,
       category: row.category,
-      start_time: startTime,
-      end_time: endTime,
+      start_time: resolved.startTime,
+      end_time: resolved.endTime,
       root_cause: row.root_cause,
       action_taken: row.action_taken,
       condition: row.condition,
     }),
+  };
+}
+
+function buildWaParseQualitySummary(args: {
+  rows: ParsedWaDowntimeRow[];
+  structuredRows: WaStructuredRow[];
+  productionRows: ProductionSummaryRow[];
+  duplicateHints: DuplicateHint[];
+  skippedCount: number;
+  notes: string[];
+  aiUsed: boolean;
+}): WaParseQualitySummary {
+  const rawMachineRows = args.rows.filter((row) => row.machine_match === 'raw' || /raw/.test(row.match_code || '') || /raw/.test(row.match_source || '')).length;
+  const lowConfidenceRows = args.rows.filter((row) => row.confidence !== 'high').length;
+  const stateRows = args.rows.filter((row) => (row.condition || '').toLowerCase() !== 'downtime').length;
+  const timingFallbackRows = args.rows.filter((row) => /timing:shift_window|state:/.test(row.warning_code || '')).length;
+  const reasons: string[] = [];
+  if (args.aiUsed) reasons.push('AI dipakai pada parsing.');
+  if (rawMachineRows) reasons.push(`${rawMachineRows} row masih pakai machine raw fallback.`);
+  if (lowConfidenceRows) reasons.push(`${lowConfidenceRows} row confidence belum high.`);
+  if (args.duplicateHints.length) reasons.push(`${args.duplicateHints.length} conflict/duplicate terdeteksi.`);
+  if (args.skippedCount) reasons.push(`${args.skippedCount} line di-skip.`);
+  if (timingFallbackRows) reasons.push(`${timingFallbackRows} row pakai fallback timing shift.`);
+
+  let riskLevel: WaParseQualitySummary['riskLevel'] = 'low';
+  if (rawMachineRows > 2 || lowConfidenceRows > Math.max(1, Math.ceil(args.rows.length / 2)) || args.duplicateHints.length > 2 || args.skippedCount > args.rows.length) {
+    riskLevel = 'high';
+  } else if (rawMachineRows > 0 || lowConfidenceRows > 0 || args.duplicateHints.length > 0 || args.skippedCount > 0 || args.aiUsed) {
+    riskLevel = 'medium';
+  }
+  const reviewRequired = riskLevel !== 'low' || args.duplicateHints.length > 0 || rawMachineRows > 0 || lowConfidenceRows > 0;
+  if (!reasons.length) reasons.push('Tidak ada indikasi ambiguity utama.');
+  return {
+    riskLevel,
+    reviewRequired,
+    totalRows: args.rows.length + args.productionRows.length,
+    parsedRows: args.rows.length,
+    structuredRows: args.structuredRows.length,
+    productionRows: args.productionRows.length,
+    skippedLines: args.skippedCount,
+    aiUsed: args.aiUsed,
+    duplicateHintCount: args.duplicateHints.length,
+    rawMachineRows,
+    lowConfidenceRows,
+    stateRows,
+    timingFallbackRows,
+    notes: args.notes.slice(0, 8),
+    reasons,
   };
 }
 
@@ -1031,18 +1127,12 @@ function shiftNumber(shiftCode: string) {
 }
 
 function minutesBetween(eventDate: string, startTime: string, endTime: string) {
-  if (!eventDate || !startTime || !endTime) return 0;
-  const start = new Date(`${eventDate}T${startTime}:00+07:00`);
-  let end = new Date(`${eventDate}T${endTime}:00+07:00`);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
-  if (end < start) end = new Date(end.getTime() + 86400000);
-  return Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+  void eventDate;
+  return sharedDeriveDowntimeWaDurationMinutes(startTime, endTime);
 }
 
 function addMinutes(time: string, minutes: number) {
-  const [hour, minute] = time.split(':').map(Number);
-  const total = ((hour || 0) * 60 + (minute || 0) + minutes) % 1440;
-  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+  return sharedAddDowntimeWaMinutes(time, minutes);
 }
 
 function normalizeTime(raw: string) {
@@ -1060,14 +1150,14 @@ function parseProblemTiming(line: string, context: Pick<ParserContext, 'eventDat
   if (range) {
     const start = normalizeTime(range[1]);
     const end = normalizeTime(range[2]);
-    const duration = range[3] ? Number(range[3]) : minutesBetween(context.eventDate, start, end);
-    return { start, end, duration: duration || minutesBetween(context.eventDate, start, end), confidence: 'high' as const, warning: '' };
+    const duration = range[3] !== undefined ? Number(range[3]) : minutesBetween(context.eventDate, start, end);
+    return { start, end, duration, confidence: 'high' as const, warning: '' };
   }
 
   const durationMatch = text.match(/(\d{1,4})\s*(?:menit|mnt|min)\b/i);
   if (durationMatch) {
     const duration = Number(durationMatch[1]);
-    const shiftWindow = shiftWindows[shiftNumber(context.shiftCode)] ?? shiftWindows['1'];
+    const shiftWindow = resolveShiftWindow(context.shiftCode);
     return {
       start: shiftWindow.start,
       end: addMinutes(shiftWindow.start, duration),
@@ -1176,14 +1266,19 @@ function mergeCodes(...codes: Array<string | undefined | null>) {
 
 function makeRow(context: ParserContext, line: string, timing: ReturnType<typeof parseProblemTiming>, sourceOrder = 0, overrides: Partial<ParsedWaDowntimeRow> = {}): ParsedWaDowntimeRow | null {
   if (!context.eventDate || !context.shiftCode || !context.machine) return null;
-  const shiftWindow = shiftWindows[shiftNumber(context.shiftCode)] ?? shiftWindows['1'];
-  const start = overrides.start_time || timing?.start || shiftWindow.start;
-  const end = overrides.end_time || timing?.end || shiftWindow.end;
-  const duration = overrides.duration_minutes || timing?.duration || minutesBetween(context.eventDate, start, end);
   const causeAuto = autoCorrectHighConfidenceTypos(overrides.root_cause || removeTimingFromCause(line) || stripWaMarkdown(line));
   const cause = clean(causeAuto.text);
   if (!cause) return null;
-  const condition = overrides.condition || inferConditionFromText(cause) || (timing?.confidence === 'high' ? 'downtime' : 'unknown');
+  const inferredCondition = inferConditionFromText(cause);
+  const condition = overrides.condition || inferredCondition || (!isGenericDowntimeRootCause(cause) ? 'downtime' : 'unknown');
+  const resolved = resolveDowntimeWaTiming({
+    eventDate: context.eventDate,
+    shiftCode: context.shiftCode,
+    condition,
+    startTime: overrides.start_time || timing?.start || null,
+    endTime: overrides.end_time || timing?.end || null,
+    durationMinutes: overrides.duration_minutes ?? timing?.duration ?? null,
+  });
   const actionAuto = autoCorrectHighConfidenceTypos(clean(overrides.action_taken));
   const matchCode = context.machineMatchCode || `machine:${context.machineMatch}`;
   const warningCode = mergeCodes(
@@ -1207,9 +1302,9 @@ function makeRow(context: ParserContext, line: string, timing: ReturnType<typeof
     match_source: buildDowntimeWaMatchSource(context.machineMatch, context.machineMatchCode, context.machineMatchReason),
     line: context.machine,
     category: overrides.category || inferCategory(cause),
-    start_time: start,
-    end_time: end,
-    duration_minutes: duration,
+    start_time: resolved.startTime,
+    end_time: resolved.endTime,
+    duration_minutes: resolved.durationMinutes,
     status: overrides.status || (timing?.confidence === 'high' ? 'open' : 'monitoring'),
     pic: '',
     root_cause: cause,
@@ -1229,8 +1324,8 @@ function makeRow(context: ParserContext, line: string, timing: ReturnType<typeof
       machine_normalized: context.machineNormalized,
       line: context.machineRaw || context.machine,
       category: overrides.category || inferCategory(cause),
-      start_time: start,
-      end_time: end,
+      start_time: resolved.startTime,
+      end_time: resolved.endTime,
       root_cause: cause,
       action_taken: actionAuto.text,
       condition,
@@ -1243,7 +1338,15 @@ function makeRow(context: ParserContext, line: string, timing: ReturnType<typeof
 
 function makeStateRow(context: ParserContext, state: 'lancar' | 'off' | 'standby' | 'setup' | 'cleaning' | 'trial' | 'running', line: string, sourceOrder = 0): ParsedWaDowntimeRow | null {
   if (!context.eventDate || !context.shiftCode || !context.machine) return null;
-  const shiftWindow = shiftWindows[shiftNumber(context.shiftCode)] ?? shiftWindows['1'];
+  const shiftWindow = resolveShiftWindow(context.shiftCode);
+  const resolved = resolveDowntimeWaTiming({
+    eventDate: context.eventDate,
+    shiftCode: context.shiftCode,
+    condition: state,
+    startTime: state === 'lancar' ? shiftWindow.start : shiftWindow.start,
+    endTime: state === 'lancar' ? shiftWindow.start : shiftWindow.end,
+    durationMinutes: state === 'lancar' ? 0 : 480,
+  });
   return {
     event_date: context.eventDate,
     shift_code: context.shiftCode,
@@ -1255,9 +1358,9 @@ function makeStateRow(context: ParserContext, state: 'lancar' | 'off' | 'standby
     match_source: buildDowntimeWaMatchSource(context.machineMatch, context.machineMatchCode, context.machineMatchReason),
     line: context.machine,
     category: 'other',
-    start_time: shiftWindow.start,
-    end_time: shiftWindow.end,
-    duration_minutes: 0,
+    start_time: resolved.startTime,
+    end_time: resolved.endTime,
+    duration_minutes: resolved.durationMinutes,
     status: 'closed',
     pic: '',
     root_cause: state.toUpperCase(),
@@ -1277,8 +1380,8 @@ function makeStateRow(context: ParserContext, state: 'lancar' | 'off' | 'standby
       machine_normalized: context.machineNormalized,
       line: context.machineRaw || context.machine,
       category: 'other',
-      start_time: shiftWindow.start,
-      end_time: shiftWindow.end,
+      start_time: resolved.startTime,
+      end_time: resolved.endTime,
       root_cause: state.toUpperCase(),
       action_taken: '',
       condition: state,
@@ -1502,12 +1605,13 @@ function buildStructuredRows(rows: ParsedWaDowntimeRow[], stateRows: ParsedWaDow
   return [...rows, ...stateRows].sort((a, b) => compareDowntimeRows(a, b, machineOrderMap)).map((row) => ({
     ...(() => {
       const fallbackWindow = resolveShiftWindow(row.shift_code);
-      const startTime = row.start_time || fallbackWindow.start;
-      const endTime = row.end_time || fallbackWindow.end;
+      const isLancar = clean(row.condition).toLowerCase() === 'lancar';
+      const startTime = isPlaceholderTime(row.start_time) ? fallbackWindow.start : clean(row.start_time);
+      const endTime = isPlaceholderTime(row.end_time) ? fallbackWindow.end : clean(row.end_time);
       return {
         start: startTime,
         end: endTime,
-        durasi_menit: row.duration_minutes || minutesBetween(row.event_date, startTime, endTime),
+        durasi_menit: isLancar ? 0 : (row.duration_minutes > 0 ? row.duration_minutes : minutesBetween(row.event_date, startTime, endTime)),
       };
     })(),
     tanggal: row.event_date,
@@ -2293,6 +2397,15 @@ export async function POST(request: NextRequest) {
     }
   })();
   parserMeta.duplicateHintCount = duplicateHints.length;
+  const quality = buildWaParseQualitySummary({
+    rows: sortedRows,
+    structuredRows,
+    productionRows,
+    duplicateHints,
+    skippedCount: parsed.skipped.length,
+    notes: parsed.notes || [],
+    aiUsed: Boolean(parsed.aiUsed),
+  });
   if (!shouldImport) {
     return NextResponse.json({
       data: {
@@ -2310,6 +2423,7 @@ export async function POST(request: NextRequest) {
         productionRows,
         blocks,
         duplicateHints,
+        quality,
         skipped: parsed.skipped.slice(0, 20),
         aiUsed: parsed.aiUsed,
         aiModel: parsed.aiModel,
@@ -2347,6 +2461,7 @@ export async function POST(request: NextRequest) {
       productionRows,
       blocks,
       duplicateHints,
+      quality,
       skipped: parsed.skipped.slice(0, 20),
       aiUsed: parsed.aiUsed,
       aiModel: parsed.aiModel,

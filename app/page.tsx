@@ -6,6 +6,7 @@ import { Activity, CalendarDays, Clock3, Database, Download, Factory, FileText, 
 import { DashboardSidebar, type DashboardFilters } from '@/components/dashboard/dashboard-sidebar';
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { buildMachineSynonymPack, cleanText, decimalFmt, exportCsv, normalizeCode, normalizeMachineAliasText, numberFmt, toNumber } from '@/lib/dashboard';
+import { resolveDowntimeWaTiming as sharedResolveDowntimeWaTiming } from '@/lib/downtime-wa-timing';
 import type { ChartPoint, MasterEntityTarget } from '@/lib/types';
 import type { SettingsPanel as SettingsPanelType, SettingsData as SettingsDataType } from '@/components/dashboard/settings-section';
 
@@ -407,6 +408,23 @@ type DowntimeWaParseResult = {
     match_source: string;
     reason: string;
   }>;
+  quality?: {
+    riskLevel: 'low' | 'medium' | 'high';
+    reviewRequired: boolean;
+    totalRows: number;
+    parsedRows: number;
+    structuredRows: number;
+    productionRows: number;
+    skippedLines: number;
+    aiUsed: boolean;
+    duplicateHintCount: number;
+    rawMachineRows: number;
+    lowConfidenceRows: number;
+    stateRows: number;
+    timingFallbackRows: number;
+    notes: string[];
+    reasons: string[];
+  };
   existingRowsScanned?: number;
   parserContractVersion?: string;
   parserMeta?: {
@@ -1377,36 +1395,26 @@ export default function Home() {
     }
   };
 
-  const resolveDowntimeWaShiftWindow = (shiftCode: string) => {
-    switch (normalizeCode(shiftCode)) {
-      case '1':
-      case 'shift1':
-        return { start: '07:00', end: '15:00' };
-      case '2':
-      case 'shift2':
-        return { start: '15:00', end: '23:00' };
-      case '3':
-      case 'shift3':
-        return { start: '23:00', end: '07:00' };
-      default:
-        return { start: '07:00', end: '15:00' };
-    }
-  };
-
-  const deriveDowntimeWaDurationMinutes = (start: string, end: string) => {
-    const [startHour = 0, startMinute = 0] = start.split(':').map((part) => Number(part) || 0);
-    const [endHour = 0, endMinute = 0] = end.split(':').map((part) => Number(part) || 0);
-    let startTotal = startHour * 60 + startMinute;
-    let endTotal = endHour * 60 + endMinute;
-    if (endTotal <= startTotal) endTotal += 24 * 60;
-    return Math.max(endTotal - startTotal, 0);
+  const resolveDowntimeWaTiming = (args: {
+    eventDate: string;
+    shiftCode: string;
+    condition?: string | null;
+    startTime?: string | null;
+    endTime?: string | null;
+    durationMinutes?: number | null;
+  }) => {
+    return sharedResolveDowntimeWaTiming(args);
   };
 
   const deriveDowntimeWaStructuredRow = (row: any) => {
-    const fallbackWindow = resolveDowntimeWaShiftWindow(row.shift_code);
-    const start = row.start_time || fallbackWindow.start;
-    const end = row.end_time || fallbackWindow.end;
-    const duration = row.duration_minutes || deriveDowntimeWaDurationMinutes(start, end);
+    const resolved = resolveDowntimeWaTiming({
+      eventDate: row.event_date,
+      shiftCode: row.shift_code,
+      condition: row.condition || row.root_cause || row.source_line,
+      startTime: row.start_time,
+      endTime: row.end_time,
+      durationMinutes: row.duration_minutes,
+    });
     return {
       tanggal: row.event_date,
       machine_master: row.machine,
@@ -1416,10 +1424,10 @@ export default function Home() {
       match_source: row.match_source || row.match_code || 'raw:fallback',
       match_code: row.match_code || '',
       match_reason: row.match_reason || '',
-      idempotency_key: row.idempotency_key || `${row.event_date || ''}|${row.shift_code || ''}|${normalizeDowntimeWaArea(row.area || '')}|${normalizeCode(row.machine || '')}|${normalizeCode(row.line || row.machine || '')}|${normalizeCode(row.category || '')}|${start}|${end}|${normalizeCode(row.root_cause || '')}|${normalizeCode(row.action_taken || '')}|${normalizeCode(row.condition || '')}`,
-      start,
-      end,
-      durasi_menit: duration,
+      idempotency_key: row.idempotency_key || `${row.event_date || ''}|${row.shift_code || ''}|${normalizeDowntimeWaArea(row.area || '')}|${normalizeCode(row.machine || '')}|${normalizeCode(row.line || row.machine || '')}|${normalizeCode(row.category || '')}|${resolved.startTime}|${resolved.endTime}|${normalizeCode(row.root_cause || '')}|${normalizeCode(row.action_taken || '')}|${normalizeCode(row.condition || '')}`,
+      start: resolved.startTime,
+      end: resolved.endTime,
+      durasi_menit: resolved.durationMinutes,
       reason: row.root_cause,
       operator: row.pic,
       note: row.action_taken || row.warning || row.source_line,
@@ -1472,6 +1480,34 @@ export default function Home() {
       existingCount,
       affectedRowCount: affectedRows.size,
     };
+  };
+
+  const summarizeDowntimeWaQuality = (quality?: DowntimeWaParseResult['quality']) => {
+    if (!quality) return null;
+    const badgeClass = quality.riskLevel === 'high' ? 'exceed-target' : quality.riskLevel === 'medium' ? 'on-track' : 'within-target';
+    return (
+      <div className="warning-box">
+        <strong>Quality gate</strong>
+        <div className="compare-summary-grid downtime-conflict-summary">
+          <div className="compare-summary-card">
+            <span>Risk</span>
+            <strong className={badgeClass}>{quality.riskLevel.toUpperCase()}</strong>
+            <em>{quality.reviewRequired ? 'Perlu review sebelum save' : 'Aman untuk lanjut save'}</em>
+          </div>
+          <div className="compare-summary-card">
+            <span>Raw fallback</span>
+            <strong>{numberFmt.format(quality.rawMachineRows)}</strong>
+            <em>{numberFmt.format(quality.lowConfidenceRows)} low confidence · {numberFmt.format(quality.timingFallbackRows)} timing fallback</em>
+          </div>
+          <div className="compare-summary-card">
+            <span>Dup / skip</span>
+            <strong>{numberFmt.format(quality.duplicateHintCount)}</strong>
+            <em>{numberFmt.format(quality.skippedLines)} line di-skip</em>
+          </div>
+        </div>
+        {quality.reasons.length ? <ul>{quality.reasons.slice(0, 6).map((reason, index) => <li key={index}>{reason}</li>)}</ul> : null}
+      </div>
+    );
   };
 
   const buildDowntimeWaPreviewDiff = (baseline: DowntimeWaParsedRow[], current: DowntimeWaParsedRow[]) => {
@@ -2626,7 +2662,9 @@ export default function Home() {
     }
     setSavingDowntimeEvent(true);
     try {
-      const duration = downtimeEventForm.duration_minutes || String(minutesBetween(downtimeEventForm.event_date, downtimeEventForm.start_time, downtimeEventForm.end_time));
+      const duration = downtimeEventForm.duration_minutes !== '' && downtimeEventForm.duration_minutes !== null && downtimeEventForm.duration_minutes !== undefined
+        ? String(downtimeEventForm.duration_minutes)
+        : String(minutesBetween(downtimeEventForm.event_date, downtimeEventForm.start_time, downtimeEventForm.end_time));
       const endpoint = editingDowntimeEventId ? `/api/downtime-events/${editingDowntimeEventId}` : '/api/downtime-events';
       const response = await fetch(endpoint, {
         method: editingDowntimeEventId ? 'PUT' : 'POST',
@@ -3038,8 +3076,9 @@ export default function Home() {
                           </div>
                         </div>
 
-                        {(downtimeWaResult.notes?.length || downtimeWaResult.duplicateHints?.length || downtimeWaPreviewDiff.length) ? (
+                        {(downtimeWaResult.quality || downtimeWaResult.notes?.length || downtimeWaResult.duplicateHints?.length || downtimeWaPreviewDiff.length) ? (
                           <div className="downtime-review-grid">
+                            {summarizeDowntimeWaQuality(downtimeWaResult.quality)}
                             {downtimeWaResult.notes?.length ? <div className="warning-box"><strong>Catatan parser</strong><ul>{downtimeWaResult.notes.slice(0, 8).map((note, index) => <li key={index}>{note}</li>)}</ul></div> : null}
                             {downtimeWaResult.duplicateHints?.length ? (
                               <div className="warning-box">
