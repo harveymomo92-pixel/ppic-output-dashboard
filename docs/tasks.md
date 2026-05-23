@@ -56,11 +56,11 @@ Planning/PRD -> Frontend -> Backend -> Integration -> Deploy
 ## Phase 5 — Deploy
 
 - [ ] Create requirements file
-- [ ] Create run script
-- [ ] Test app locally
-- [ ] Optional: create systemd service
+- [x] Create run script
+- [x] Test app locally
+- [x] Optional: create systemd service
 - [ ] Optional: Dockerize
-- [ ] Document operational runbook
+- [x] Document operational runbook
 
 ## Phase 6 — UX Simplification / First-Time User
 
@@ -77,14 +77,14 @@ Planning/PRD -> Frontend -> Backend -> Integration -> Deploy
 
 ## Phase 7 — WA Parser & Normalizer Hardening
 
-- [ ] Bekukan schema output parser WA untuk downtime dan produksi
-- [ ] Tambah fixture WA nyata untuk variasi format yang paling sering muncul
-- [ ] Pecah normalizer jadi rule layer yang lebih eksplisit untuk machine, typo, dan family inference
-- [ ] Tambah alasan match / warning code yang lebih jelas di preview
-- [ ] Perluas coverage kondisi `lancar`, `off`, `standby`, `setup`, `cleaning`, `trial`
-- [ ] Perkuat dedupe / idempotency saat import ulang hasil parse
-- [ ] Perjelas rules-first vs AI fallback dalam dokumentasi dan prompt
-- [ ] Update runbook / docs setelah perilaku parser stabil
+- [x] Bekukan schema output parser WA untuk downtime dan produksi
+- [x] Tambah fixture WA nyata untuk variasi format yang paling sering muncul
+- [x] Pecah normalizer jadi rule layer yang lebih eksplisit untuk machine, typo, dan family inference
+- [x] Tambah alasan match / warning code yang lebih jelas di preview
+- [x] Perluas coverage kondisi `lancar`, `off`, `standby`, `setup`, `cleaning`, `trial`
+- [x] Perkuat dedupe / idempotency saat import ulang hasil parse
+- [x] Perjelas rules-first vs AI fallback dalam dokumentasi dan prompt
+- [x] Update runbook / docs setelah perilaku parser stabil
 
 ## MVP Acceptance Criteria
 

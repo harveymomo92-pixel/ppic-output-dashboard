@@ -20,6 +20,7 @@ Documentation/reference outputs:
 
 - `docs/master-entity-target-produksi.json` — full normalized master target data
 - `docs/master-entity-target-summary.json` — summary and duplicate-name overview
+- `docs/wa-parser-fixtures.md` — regression seed untuk parser WA downtime/produksi
 
 ## Run locally
 
@@ -35,6 +36,24 @@ npm run dev:live
 ```
 
 The launcher reads `/root/.config/ppic-output-dashboard/runtime.env` when present.
+
+### Systemd service in this workspace
+
+For long-running local dev in this host, the app is also available as:
+
+```text
+ppic-output-dashboard-dev.service
+```
+
+It is configured with:
+
+- `MemoryHigh=512M`
+- `MemoryMax=1.9G`
+- `MemorySwapMax=1.9G`
+- `Nice=10`
+- `IOSchedulingClass=idle`
+
+Use it when you want the dashboard to stay up in the background without competing too hard with the rest of the host.
 
 Open:
 
@@ -92,6 +111,8 @@ Dashboard mapping rule:
 - OData `gProdOrRotLine_Description` is stored as SQLite `item_ledger_output.prod_line_description`
 - Master entity `kode_asli_sistem` is matched to `prod_line_description` using normalized text
 - `External_Document_No` is split into `shift_code`, `work_hours`, and `operator_name` during import
+- WA downtime preview sekarang membawa `match_code` dan `warning_code` supaya alias / normalizer bisa diaudit cepat sebelum save
+- Save ulang parser WA memakai exact key dulu, lalu canonical machine/line key supaya alias drift tetap update baris existing dan tidak bikin duplikat baru
 
 ## Production build check
 

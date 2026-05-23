@@ -97,7 +97,7 @@ Tahap awal menggunakan data `Entry_Type = Output` untuk 3 bulan terakhir. Dashbo
 4. Output vs reject analysis jika reject dataset tersedia.
 5. Output vs plan/capacity jika data planning tersedia.
 6. Downtime backfill import + dedupe/upsert untuk histori event lama.
-7. Hardening Copas WA parser + normalizer untuk downtime import, termasuk schema freeze, alias registry, preview diff yang lebih jelas, dan fixture regression.
+7. Hardening Copas WA parser + normalizer untuk downtime import, termasuk schema freeze, alias registry eksplisit, preview diff + `match_code` / `warning_code` yang lebih jelas, dan fixture regression.
 
 ## 4. User Flow
 

@@ -9,6 +9,7 @@ Dokumen ini merangkum arah peningkatan untuk parser WA downtime dan layer normal
 3. Hasil preview lebih mudah divalidasi sebelum save.
 4. Import tetap idempotent dan aman di-run ulang.
 5. Ada jejak alasan kenapa baris dipetakan ke machine tertentu.
+6. Fixture regresi mudah dibaca dan bisa dipakai ulang saat parser berubah.
 
 ## Prinsip kerja
 
@@ -32,10 +33,10 @@ Parser WA yang sudah ada sekarang sudah punya:
 
 Yang masih perlu diperkuat:
 
-1. Normalisasi machine/alias belum dibakukan sebagai registry eksplisit.
-2. Penjelasan confidence dan alasan match masih belum cukup detail untuk audit cepat.
-3. Coverage fixture WA masih perlu diperluas untuk variasi format nyata.
-4. Fallback AI belum punya guardrail dokumentasi yang tegas per mode.
+1. Normalisasi machine/alias masih perlu registry eksplisit yang bisa dilacak per sumber alias.
+2. Penjelasan confidence, `match_code`, dan `warning_code` masih perlu diperkaya untuk audit cepat.
+3. Coverage fixture WA masih perlu diperluas untuk variasi format nyata dan edge case produksi/downtime.
+4. Fallback AI perlu guardrail dokumentasi yang tegas per mode, terutama rules-first vs hybrid.
 5. Output preview masih perlu diposisikan sebagai alat validasi, bukan sekadar hasil parse.
 
 ## Urutan pengerjaan
@@ -47,22 +48,25 @@ Fokus:
 1. Bekukan schema hasil parse downtime dan produksi.
 2. Tambah fixture WA nyata untuk variasi format yang sering muncul.
 3. Tambah kasus edge: tanggal nempel, shift ambigu, jam hilang, machine pakai singkatan.
+4. Pastikan preview membawa kode alasan match dan warning yang stabil.
 
 Selesai kalau:
 
 1. hasil parse yang sama selalu memberi output yang sama pada fixture yang sama.
+2. preview bisa dibaca ulang tanpa membuka log parser.
 
 ### P1 — Perkuat normalizer inti
 
 Fokus:
 
 1. Pisahkan rule normalisasi machine, typo correction, dan inferensi family.
-2. Buat registry alias/canonical yang lebih eksplisit.
-3. Tambahkan alasan match yang bisa dibaca user saat preview.
+2. Buat registry alias/canonical yang lebih eksplisit dan punya sumber alias yang jelas.
+3. Tambahkan alasan match yang bisa dibaca user saat preview, plus kode singkat untuk scan cepat.
 
 Selesai kalau:
 
 1. machine hasil parse bisa dijelaskan dari alias mana dia jatuh ke master target.
+2. user bisa melihat kode match yang sama antara preview, log, dan hasil save.
 
 ### P2 — Perluas parsing rules
 
@@ -83,6 +87,7 @@ Fokus:
 1. Tambah warning code yang konsisten untuk parse ambigu, duplicate, dan fallback AI.
 2. Tampilkan alasan kenapa baris di-skip.
 3. Tambah ringkasan coverage per mode parser di preview.
+4. Simpan fixture regresi WA sebagai contoh hidup yang bisa di-review manual.
 
 Selesai kalau:
 
@@ -122,6 +127,7 @@ Urutan praktis yang paling aman:
 4. Tambah observability preview.
 5. Perkuat import safety.
 6. Terakhir, poles AI fallback dan prompt.
+7. Simpan fixture regresi dan catatan contoh di docs supaya perubahan parser tetap auditable.
 
 ## File target utama
 
@@ -131,6 +137,7 @@ Urutan praktis yang paling aman:
 4. `docs/PRD.md`
 5. `docs/tasks.md`
 6. `README.md`
+7. `docs/wa-parser-fixtures.md`
 
 ## Kriteria sukses
 

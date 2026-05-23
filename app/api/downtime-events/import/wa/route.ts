@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { clean, getDb } from '@/lib/server/db';
+import { clean, getDb, normalizeCode } from '@/lib/server/db';
 import { loadAppSettings } from '@/lib/server/app-settings';
 import { buildMachineSynonymPack, normalizeMachineAliasText } from '@/lib/dashboard';
 
@@ -14,6 +14,8 @@ type ParsedWaDowntimeRow = {
   machine_raw?: string;
   machine_normalized?: string;
   machine_match?: 'family' | 'alias' | 'raw';
+  match_code?: string;
+  match_reason?: string;
   line: string;
   category: string;
   start_time: string;
@@ -28,6 +30,7 @@ type ParsedWaDowntimeRow = {
   source_line: string;
   confidence: 'high' | 'medium' | 'low';
   warning: string;
+  warning_code?: string;
   condition?: 'downtime' | 'lancar' | 'off' | 'normal' | 'standby' | 'setup' | 'cleaning' | 'trial' | 'running' | 'changeover' | 'unknown';
 };
 
@@ -73,6 +76,8 @@ type WaStructuredRow = {
   machine_raw: string;
   machine_normalized: string;
   machine_match: 'family' | 'alias' | 'raw';
+  match_code: string;
+  match_reason: string;
   start: string;
   end: string;
   durasi_menit: number;
@@ -84,6 +89,7 @@ type WaStructuredRow = {
   area: string;
   category: string;
   confidence: string;
+  warning_code: string;
 };
 
 type ProductionSummaryRow = {
@@ -95,6 +101,8 @@ type ProductionSummaryRow = {
   machine_raw: string;
   machine_normalized: string;
   machine_match: 'family' | 'alias' | 'raw';
+  match_code: string;
+  match_reason: string;
   product: string;
   metric_hasil: string;
   metric_reject_print: string;
@@ -122,6 +130,8 @@ type ParserContext = {
   machineRaw: string;
   machineNormalized: string;
   machineMatch: 'family' | 'alias' | 'raw';
+  machineMatchCode: string;
+  machineMatchReason: string;
   area: string;
   lastEventIndex: number;
   inProblem: boolean;
@@ -189,6 +199,8 @@ type MachineResolution = {
   machineRaw: string;
   machineNormalized: string;
   machineMatch: 'family' | 'alias' | 'raw';
+  matchCode: string;
+  matchReason: string;
   area: string;
 };
 
@@ -197,12 +209,40 @@ type MachineCatalog = {
   aliases: Array<MachineAliasEntry>;
 };
 
+type MachineAliasSource = 'display_laporan' | 'kode_asli_sistem' | 'kode_asli_normalized' | 'deskripsi_produk' | 'area_kerja_line' | 'family_variant';
+
 type MachineAliasEntry = {
   row: MachineCatalogRow;
   alias: string;
   aliasCompact: string;
   aliasTokens: string[];
+  source: MachineAliasSource;
+  reason: string;
 };
+
+function pushMachineAlias(
+  aliases: MachineAliasEntry[],
+  seen: Set<string>,
+  row: MachineCatalogRow,
+  alias: string,
+  source: MachineAliasSource,
+  reason: string,
+) {
+  const cleaned = clean(alias);
+  if (!cleaned) return;
+  const aliasText = normalizeMachineAliasText(cleaned);
+  const dedupeKey = `${clean(normalizeText(row.display_laporan))}::${aliasText}`;
+  if (seen.has(dedupeKey)) return;
+  seen.add(dedupeKey);
+  aliases.push({
+    row,
+    alias: cleaned,
+    aliasCompact: compactKey(aliasText),
+    aliasTokens: aliasText.split(' ').filter(Boolean),
+    source,
+    reason,
+  });
+}
 
 function loadMachineCatalog(): MachineCatalog {
   const db = getDb();
@@ -211,16 +251,15 @@ function loadMachineCatalog(): MachineCatalog {
     FROM master_entity_target
   `).all() as MachineCatalogRow[];
   const aliases: MachineAliasEntry[] = [];
+  const seen = new Set<string>();
   for (const row of rows) {
+    pushMachineAlias(aliases, seen, row, row.display_laporan || '', 'display_laporan', 'Nama laporan master yang disimpan langsung sebagai alias utama.');
+    pushMachineAlias(aliases, seen, row, row.kode_asli_sistem || '', 'kode_asli_sistem', 'Kode asli sistem dipakai sebagai alias referensi.');
+    pushMachineAlias(aliases, seen, row, row.kode_asli_normalized || '', 'kode_asli_normalized', 'Kode sistem yang sudah dinormalisasi dipakai sebagai alias referensi.');
+    pushMachineAlias(aliases, seen, row, row.deskripsi_produk || '', 'deskripsi_produk', 'Deskripsi produk ikut dipakai sebagai sinyal alias.');
+    pushMachineAlias(aliases, seen, row, row.area_kerja_line || '', 'area_kerja_line', 'Area/line juga dipakai sebagai alias pendukung.');
     for (const alias of buildMachineSynonymPack(row)) {
-      const cleaned = clean(alias);
-      if (!cleaned) continue;
-      aliases.push({
-        row,
-        alias: cleaned,
-        aliasCompact: compactKey(normalizeMachineAliasText(cleaned)),
-        aliasTokens: normalizeMachineAliasText(cleaned).split(' ').filter(Boolean),
-      });
+      pushMachineAlias(aliases, seen, row, alias, 'family_variant', 'Sinonim family / variasi bentuk teks dari registry alias.');
     }
   }
   return { rows, aliases };
@@ -317,17 +356,56 @@ function familyBoost(raw: string, alias: string) {
   return boost;
 }
 
-function scoreMachineAlias(raw: string, aliasEntry: MachineAliasEntry) {
+type MachineAliasScore = {
+  score: number;
+  code: string;
+  reason: string;
+};
+
+function scoreMachineAlias(raw: string, aliasEntry: MachineAliasEntry): MachineAliasScore | null {
   const rawCompact = compactKey(normalizeMachineAliasText(raw));
-  const { alias, aliasCompact, aliasTokens } = aliasEntry;
-  if (!aliasCompact) return 0;
-  if (rawCompact === aliasCompact) return 5000 + aliasCompact.length;
-  if (rawCompact.includes(aliasCompact) || aliasCompact.includes(rawCompact)) return 3000 + aliasCompact.length;
+  const { alias, aliasCompact, aliasTokens, source, reason } = aliasEntry;
+  if (!aliasCompact) return null;
+  if (rawCompact === aliasCompact) {
+    return {
+      score: 5000 + aliasCompact.length,
+      code: 'alias:exact',
+      reason: `Alias exact match via ${source}: ${alias}. ${reason}`,
+    };
+  }
+  if (rawCompact.includes(aliasCompact) || aliasCompact.includes(rawCompact)) {
+    return {
+      score: 3000 + aliasCompact.length,
+      code: 'alias:contains',
+      reason: `Alias containment match via ${source}: ${alias}. ${reason}`,
+    };
+  }
   const rawTokens = new Set(normalizeMachineAliasText(raw).split(' ').filter(Boolean));
   const overlap = aliasTokens.filter((token) => rawTokens.has(token)).length;
   const prefixMatch = aliasTokens[0] && rawTokens.has(aliasTokens[0]) ? 1 : 0;
   const family = familyBoost(raw, alias);
-  return family + (overlap * 120) + (prefixMatch * 40) + Math.min(aliasTokens.length, 5) * 5;
+  const score = family + (overlap * 120) + (prefixMatch * 40) + Math.min(aliasTokens.length, 5) * 5;
+  if (!score) return null;
+  const pieces = [
+    overlap > 0 ? `overlap ${overlap}/${aliasTokens.length}` : '',
+    prefixMatch ? 'prefix match' : '',
+    family ? `family boost ${family}` : '',
+    `source ${source}`,
+  ].filter(Boolean);
+  return {
+    score,
+    code: family > 0 ? 'alias:family-bias' : overlap >= 2 ? 'alias:overlap' : 'alias:weak',
+    reason: `Alias score via ${alias}: ${pieces.join('; ') || reason}.`,
+  };
+}
+
+function catalogRowByLabel(catalog: MachineCatalog, label: string) {
+  const normalized = normalizeText(label);
+  if (!normalized) return null;
+  const resolved = catalog.aliases
+    .filter((entry) => normalizeText(entry.row.display_laporan) === normalized || normalizeText(entry.alias) === normalized)
+    .sort((a, b) => (scoreMachineAlias(label, b)?.score ?? 0) - (scoreMachineAlias(label, a)?.score ?? 0))[0]?.row;
+  return resolved || null;
 }
 
 function resolveMachineLabel(rawLine: string, catalog: MachineCatalog): MachineResolution {
@@ -335,44 +413,86 @@ function resolveMachineLabel(rawLine: string, catalog: MachineCatalog): MachineR
   const borcheFamily = normalizeMachineAliasText(raw).match(/\b(?:borch|borche)\s*0*([1-2])\b/);
   if (borcheFamily) {
     const familyName = `Borche ${borcheFamily[1]}`;
-    const family = catalog.aliases
-      .filter((entry) => normalizeText(entry.row.display_laporan) === normalizeText(familyName) || normalizeText(entry.alias) === normalizeText(familyName))
-      .sort((a, b) => scoreMachineAlias(raw, b) - scoreMachineAlias(raw, a))[0]?.row;
-    if (family) return { machine: clean(family.display_laporan), machineRaw: raw, machineNormalized: machineKey(family.display_laporan), machineMatch: 'family', area: clean(family.area_kerja_line) };
+    const family = catalogRowByLabel(catalog, familyName);
+    if (family) {
+      return {
+        machine: clean(family.display_laporan),
+        machineRaw: raw,
+        machineNormalized: machineKey(family.display_laporan),
+        machineMatch: 'family',
+        matchCode: 'family:borche',
+        matchReason: `Family inference dari teks "${familyName}" ke master ${clean(family.display_laporan)}.`,
+        area: clean(family.area_kerja_line),
+      };
+    }
   }
   const directFamily = normalizeMachineAliasText(raw).match(/\b(?:hengfeng|hf)\s*0*([1-4])\b|\b(?:illig|tf)\s*0*([1-3])\b/);
   if (directFamily) {
     const hengfeng = directFamily[1];
     const illig = directFamily[2];
     const familyName = hengfeng ? `Hengfeng ${hengfeng}` : `Illig ${illig}`;
-    const family = catalog.aliases
-      .filter((entry) => normalizeText(entry.row.display_laporan) === normalizeText(familyName) || normalizeText(entry.alias) === normalizeText(familyName))
-      .sort((a, b) => scoreMachineAlias(raw, b) - scoreMachineAlias(raw, a))[0]?.row;
-    if (family) return { machine: clean(family.display_laporan), machineRaw: raw, machineNormalized: machineKey(family.display_laporan), machineMatch: 'family', area: clean(family.area_kerja_line) };
+    const family = catalogRowByLabel(catalog, familyName);
+    if (family) {
+      return {
+        machine: clean(family.display_laporan),
+        machineRaw: raw,
+        machineNormalized: machineKey(family.display_laporan),
+        machineMatch: 'family',
+        matchCode: 'family:direct',
+        matchReason: `Family inference langsung dari teks "${familyName}" ke master ${clean(family.display_laporan)}.`,
+        area: clean(family.area_kerja_line),
+      };
+    }
   }
   const inferred = inferMachineFamilyLabel(raw);
   if (inferred) {
-    const family = catalog.aliases
-      .filter((entry) => normalizeText(entry.row.display_laporan) === normalizeText(inferred) || normalizeText(entry.alias) === normalizeText(inferred))
-      .sort((a, b) => scoreMachineAlias(raw, b) - scoreMachineAlias(raw, a))[0]?.row;
-    if (family) return { machine: clean(family.display_laporan), machineRaw: raw, machineNormalized: machineKey(family.display_laporan), machineMatch: 'family', area: clean(family.area_kerja_line) };
+    const family = catalogRowByLabel(catalog, inferred);
+    if (family) {
+      return {
+        machine: clean(family.display_laporan),
+        machineRaw: raw,
+        machineNormalized: machineKey(family.display_laporan),
+        machineMatch: 'family',
+        matchCode: 'family:inferred',
+        matchReason: `Family inference dari pola teks "${inferred}" ke master ${clean(family.display_laporan)}.`,
+        area: clean(family.area_kerja_line),
+      };
+    }
   }
 
   let best: MachineCatalogRow | null = null;
   let bestScore = 0;
+  let bestDecision: MachineAliasScore | null = null;
   for (const entry of catalog.aliases) {
-    const score = scoreMachineAlias(raw, entry);
-    if (score > bestScore) {
+    const decision = scoreMachineAlias(raw, entry);
+    if (decision && decision.score > bestScore) {
       best = entry.row;
-      bestScore = score;
+      bestScore = decision.score;
+      bestDecision = decision;
     }
   }
 
   if (best && bestScore > 0) {
-    return { machine: clean(best.display_laporan), machineRaw: raw, machineNormalized: machineKey(best.display_laporan), machineMatch: 'alias', area: clean(best.area_kerja_line) };
+    return {
+      machine: clean(best.display_laporan),
+      machineRaw: raw,
+      machineNormalized: machineKey(best.display_laporan),
+      machineMatch: 'alias',
+      matchCode: bestDecision?.code || 'alias:match',
+      matchReason: bestDecision?.reason || `Alias registry match ke master ${clean(best.display_laporan)}.`,
+      area: clean(best.area_kerja_line),
+    };
   }
 
-  return { machine: clean(raw), machineRaw: raw, machineNormalized: machineKey(raw), machineMatch: 'raw', area: inferArea(raw) };
+  return {
+    machine: clean(raw),
+    machineRaw: raw,
+    machineNormalized: machineKey(raw),
+    machineMatch: 'raw',
+    matchCode: 'machine:raw-fallback',
+    matchReason: 'Tidak ada alias registry yang cocok; fallback ke teks asli.',
+    area: inferArea(raw),
+  };
 }
 
 function resolveProductionMachine(rawLine: string, section: 'PRINTING' | 'THERMOFORMING', catalog: MachineCatalog) {
@@ -381,26 +501,47 @@ function resolveProductionMachine(rawLine: string, section: 'PRINTING' | 'THERMO
 
   if (section === 'PRINTING') {
     const omso = normalized.match(/\bomso\s*([12])\b|\bomso([12])\b/);
-    if (omso) return { machine: `OMSO ${omso[1] || omso[2]}`, machineRaw: raw, machineNormalized: machineKey(`OMSO ${omso[1] || omso[2]}`), machineMatch: 'family' as const, area: 'PRINTING' as const };
+    if (omso) {
+      const machine = `OMSO ${omso[1] || omso[2]}`;
+      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchCode: 'family:printing', matchReason: `Header produksi printing terdeteksi sebagai ${machine}.`, area: 'PRINTING' as const };
+    }
     const poly = normalized.match(/\bpoly\s*print\s*([12])\b|\bpolyprint\s*([12])\b/);
-    if (poly) return { machine: `Polyprint ${poly[1] || poly[2]}`, machineRaw: raw, machineNormalized: machineKey(`Polyprint ${poly[1] || poly[2]}`), machineMatch: 'family' as const, area: 'PRINTING' as const };
+    if (poly) {
+      const machine = `Polyprint ${poly[1] || poly[2]}`;
+      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchCode: 'family:printing', matchReason: `Header produksi printing terdeteksi sebagai ${machine}.`, area: 'PRINTING' as const };
+    }
     const cai = normalized.match(/\bcai[- ]?([12])\b/);
-    if (cai) return { machine: `CAI ${cai[1]}`, machineRaw: raw, machineNormalized: machineKey(`CAI ${cai[1]}`), machineMatch: 'family' as const, area: 'PRINTING' as const };
+    if (cai) {
+      const machine = `CAI ${cai[1]}`;
+      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchCode: 'family:printing', matchReason: `Header produksi printing terdeteksi sebagai ${machine}.`, area: 'PRINTING' as const };
+    }
     const newdo = normalized.match(/\bnewdo[- ]?([12])\b/);
-    if (newdo) return { machine: `Newdo ${newdo[1]}`, machineRaw: raw, machineNormalized: machineKey(`Newdo ${newdo[1]}`), machineMatch: 'family' as const, area: 'PRINTING' as const };
+    if (newdo) {
+      const machine = `Newdo ${newdo[1]}`;
+      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchCode: 'family:printing', matchReason: `Header produksi printing terdeteksi sebagai ${machine}.`, area: 'PRINTING' as const };
+    }
   }
 
   if (section === 'THERMOFORMING') {
     const hf = normalized.match(/\bhf\s*0?([1-4])\b/);
-    if (hf) return { machine: `Hengfeng ${hf[1]}`, machineRaw: raw, machineNormalized: machineKey(`Hengfeng ${hf[1]}`), machineMatch: 'family' as const, area: 'THERMOFORMING' as const };
+    if (hf) {
+      const machine = `Hengfeng ${hf[1]}`;
+      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchCode: 'family:thermoforming', matchReason: `Header produksi thermoforming terdeteksi sebagai ${machine}.`, area: 'THERMOFORMING' as const };
+    }
     const hengfeng = normalized.match(/\bhengfeng[- ]?([1-4])\b/);
-    if (hengfeng) return { machine: `Hengfeng ${hengfeng[1]}`, machineRaw: raw, machineNormalized: machineKey(`Hengfeng ${hengfeng[1]}`), machineMatch: 'family' as const, area: 'THERMOFORMING' as const };
+    if (hengfeng) {
+      const machine = `Hengfeng ${hengfeng[1]}`;
+      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchCode: 'family:thermoforming', matchReason: `Header produksi thermoforming terdeteksi sebagai ${machine}.`, area: 'THERMOFORMING' as const };
+    }
     const illig = normalized.match(/\billig[- ]?([1-3])\b/);
-    if (illig) return { machine: `Illig ${illig[1]}`, machineRaw: raw, machineNormalized: machineKey(`Illig ${illig[1]}`), machineMatch: 'family' as const, area: 'THERMOFORMING' as const };
+    if (illig) {
+      const machine = `Illig ${illig[1]}`;
+      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchCode: 'family:thermoforming', matchReason: `Header produksi thermoforming terdeteksi sebagai ${machine}.`, area: 'THERMOFORMING' as const };
+    }
   }
 
   const resolved = resolveMachineLabel(raw, catalog);
-  return { machine: resolved.machine, machineRaw: raw, machineNormalized: resolved.machineNormalized, machineMatch: resolved.machineMatch, area: section };
+  return { machine: resolved.machine, machineRaw: raw, machineNormalized: resolved.machineNormalized, machineMatch: resolved.machineMatch, matchCode: resolved.matchCode, matchReason: resolved.matchReason, area: section };
 }
 
 function detectProductionSection(line: string): '' | 'PRINTING' | 'THERMOFORMING' {
@@ -440,6 +581,8 @@ type ProductionBlockState = {
   machineRaw: string;
   machineNormalized: string;
   machineMatch: 'family' | 'alias' | 'raw';
+  matchCode: string;
+  matchReason: string;
   product: string;
   metrics: Record<string, string>;
   notes: string[];
@@ -456,6 +599,8 @@ function blankProductionState(section: 'PRINTING' | 'THERMOFORMING'): Production
     machineRaw: '',
     machineNormalized: '',
     machineMatch: 'raw',
+    matchCode: 'machine:raw-fallback',
+    matchReason: '',
     product: '',
     metrics: {},
     notes: [],
@@ -491,6 +636,8 @@ function finalizeProductionBlock(block: ProductionBlockState | null): Production
     machine_raw: block.machineRaw,
     machine_normalized: block.machineNormalized,
     machine_match: block.machineMatch,
+    match_code: block.matchCode,
+    match_reason: block.matchReason,
     product: block.product,
     metric_hasil: block.metrics.hasil || '',
     metric_reject_print: block.metrics.reject_print || '',
@@ -561,6 +708,8 @@ function parseProductionReport(text: string, catalog: MachineCatalog): Productio
         machineRaw: resolved.machineRaw,
         machineNormalized: resolved.machineNormalized,
         machineMatch: resolved.machineMatch,
+        matchCode: resolved.matchCode,
+        matchReason: resolved.matchReason,
         product: autoCorrectHighConfidenceTypos(clean(headerMatch[2])).text,
         metrics: {},
         notes: [],
@@ -693,6 +842,11 @@ function applyHighConfidenceTyposToRow(row: ParsedWaDowntimeRow) {
   const root = autoCorrectHighConfidenceTypos(row.root_cause);
   const action = autoCorrectHighConfidenceTypos(row.action_taken);
   const warningParts = [clean(row.warning)];
+  const warningCode = mergeCodes(
+    row.warning_code,
+    root.corrections.length ? 'typo:root_cause' : '',
+    action.corrections.length ? 'typo:action_taken' : '',
+  );
   if (root.corrections.length) warningParts.push(`Auto-correct cause: ${root.corrections.slice(0, 3).map((item) => `${item.from}→${item.to}`).join(', ')}`);
   if (action.corrections.length) warningParts.push(`Auto-correct action: ${action.corrections.slice(0, 3).map((item) => `${item.from}→${item.to}`).join(', ')}`);
   return {
@@ -700,6 +854,7 @@ function applyHighConfidenceTyposToRow(row: ParsedWaDowntimeRow) {
     root_cause: root.text || row.root_cause,
     action_taken: action.text || row.action_taken,
     warning: warningParts.filter(Boolean).join(' | '),
+    warning_code: warningCode,
   } as ParsedWaDowntimeRow;
 }
 
@@ -866,6 +1021,10 @@ function removeTimingFromCause(line: string) {
     .trim();
 }
 
+function mergeCodes(...codes: Array<string | undefined | null>) {
+  return [...new Set(codes.flatMap((code) => (code || '').split(/\s*\|\s*/).map((item) => item.trim()).filter(Boolean)))].join(' | ');
+}
+
 function makeRow(context: ParserContext, line: string, timing: ReturnType<typeof parseProblemTiming>, overrides: Partial<ParsedWaDowntimeRow> = {}): ParsedWaDowntimeRow | null {
   if (!context.eventDate || !context.shiftCode || !context.machine) return null;
   const shiftWindow = shiftWindows[shiftNumber(context.shiftCode)] ?? shiftWindows['1'];
@@ -877,6 +1036,14 @@ function makeRow(context: ParserContext, line: string, timing: ReturnType<typeof
   if (!cause) return null;
   const condition = overrides.condition || inferConditionFromText(cause) || (timing?.confidence === 'high' ? 'downtime' : 'unknown');
   const actionAuto = autoCorrectHighConfidenceTypos(clean(overrides.action_taken));
+  const matchCode = context.machineMatchCode || `machine:${context.machineMatch}`;
+  const warningCode = mergeCodes(
+    overrides.warning_code,
+    timing ? (timing.confidence === 'high' ? 'timing:explicit' : 'timing:duration_inferred') : 'timing:shift_window',
+    causeAuto.corrections.length ? 'typo:root_cause' : '',
+    actionAuto.corrections.length ? 'typo:action_taken' : '',
+    condition && condition !== 'unknown' ? `condition:${condition}` : '',
+  );
   const warningParts = [clean(overrides.warning || timing?.warning || (!timing ? 'Tidak ada jam/durasi eksplisit; memakai rentang shift.' : ''))];
   if (causeAuto.corrections.length) warningParts.push(`Auto-correct cause: ${causeAuto.corrections.slice(0, 3).map((item) => `${item.from}→${item.to}`).join(', ')}`);
   if (actionAuto.corrections.length) warningParts.push(`Auto-correct action: ${actionAuto.corrections.slice(0, 3).map((item) => `${item.from}→${item.to}`).join(', ')}`);
@@ -901,7 +1068,10 @@ function makeRow(context: ParserContext, line: string, timing: ReturnType<typeof
     linked_signal_type: '',
     source_line: stripWaMarkdown(line),
     confidence: overrides.confidence || timing?.confidence || 'low',
+    match_code: matchCode,
+    match_reason: context.machineMatchReason || '',
     warning: warningParts.filter(Boolean).join(' | '),
+    warning_code: warningCode,
     condition,
   };
 }
@@ -930,7 +1100,10 @@ function makeStateRow(context: ParserContext, state: 'lancar' | 'off' | 'standby
     linked_signal_type: '',
     source_line: stripWaMarkdown(line),
     confidence: 'medium',
+    match_code: context.machineMatchCode || `machine:${context.machineMatch}`,
+    match_reason: context.machineMatchReason || '',
     warning: `State mesin ${state.toUpperCase()} terdeteksi.`,
+    warning_code: `state:${state}`,
     condition: state,
   };
 }
@@ -939,7 +1112,19 @@ function parseWaReport(text: string, catalog: MachineCatalog) {
   const rows: ParsedWaDowntimeRow[] = [];
   const stateRows: ParsedWaDowntimeRow[] = [];
   const skipped: Array<{ line: string; reason: string }> = [];
-  const context: ParserContext = { eventDate: '', shiftCode: '', machine: '', machineRaw: '', machineNormalized: '', machineMatch: 'raw', area: '', lastEventIndex: -1, inProblem: false };
+  const context: ParserContext = {
+    eventDate: '',
+    shiftCode: '',
+    machine: '',
+    machineRaw: '',
+    machineNormalized: '',
+    machineMatch: 'raw',
+    machineMatchCode: 'machine:raw-fallback',
+    machineMatchReason: '',
+    area: '',
+    lastEventIndex: -1,
+    inProblem: false,
+  };
   const lines = text.split(/\r?\n/).map((line) => stripWaMarkdown(line)).filter(Boolean);
 
   for (const line of lines) {
@@ -952,6 +1137,8 @@ function parseWaReport(text: string, catalog: MachineCatalog) {
       context.machineRaw = '';
       context.machineNormalized = '';
       context.machineMatch = 'raw';
+      context.machineMatchCode = 'machine:raw-fallback';
+      context.machineMatchReason = '';
       context.area = '';
       continue;
     }
@@ -965,6 +1152,8 @@ function parseWaReport(text: string, catalog: MachineCatalog) {
       context.machineRaw = '';
       context.machineNormalized = '';
       context.machineMatch = 'raw';
+      context.machineMatchCode = 'machine:raw-fallback';
+      context.machineMatchReason = '';
       context.area = '';
       continue;
     }
@@ -981,6 +1170,8 @@ function parseWaReport(text: string, catalog: MachineCatalog) {
       context.machineRaw = resolved.machineRaw;
       context.machineNormalized = resolved.machineNormalized;
       context.machineMatch = resolved.machineMatch;
+      context.machineMatchCode = resolved.matchCode;
+      context.machineMatchReason = resolved.matchReason;
       context.area = resolved.area || inferArea(context.machine);
       context.inProblem = false;
       context.lastEventIndex = -1;
@@ -1068,6 +1259,8 @@ function buildStructuredRows(rows: ParsedWaDowntimeRow[], stateRows: ParsedWaDow
     machine_raw: row.machine_raw || row.source_line,
     machine_normalized: row.machine_normalized || machineKey(row.machine),
     machine_match: row.machine_match || 'raw',
+    match_code: row.match_code || '',
+    match_reason: row.match_reason || '',
     start: row.start_time,
     end: row.end_time,
     durasi_menit: row.duration_minutes,
@@ -1079,6 +1272,7 @@ function buildStructuredRows(rows: ParsedWaDowntimeRow[], stateRows: ParsedWaDow
     area: row.area,
     category: row.category,
     confidence: row.confidence,
+    warning_code: row.warning_code || '',
   }));
 }
 
@@ -1094,10 +1288,70 @@ function dedupeRows(rows: ParsedWaDowntimeRow[]) {
   return unique;
 }
 
+type ExistingDowntimeRow = {
+  id: number;
+  event_date: string;
+  shift_code: string;
+  area: string;
+  machine: string;
+  line: string;
+  category: string;
+  start_time: string;
+  end_time: string;
+  root_cause: string;
+  action_taken: string;
+  duration_minutes: number;
+  status: string;
+  pic: string;
+  estimated_loss_output: number;
+  linked_signal_type: string;
+};
+
+function downtimeExactKey(row: Pick<ParsedWaDowntimeRow, 'event_date' | 'shift_code' | 'area' | 'machine' | 'line' | 'category' | 'start_time' | 'end_time'>) {
+  return [
+    clean(row.event_date),
+    clean(row.shift_code),
+    clean(row.area),
+    clean(row.machine),
+    clean(row.line),
+    clean(row.category),
+    clean(row.start_time),
+    clean(row.end_time),
+  ].join('|');
+}
+
+function downtimeCanonicalKey(row: Pick<ParsedWaDowntimeRow, 'event_date' | 'shift_code' | 'area' | 'machine' | 'line' | 'category' | 'start_time' | 'end_time'>) {
+  return [
+    clean(row.event_date),
+    normalizeCode(row.shift_code),
+    clean(row.area).toUpperCase(),
+    machineKey(row.machine),
+    machineKey(row.line || row.machine),
+    clean(row.category).toLowerCase(),
+    clean(row.start_time),
+    clean(row.end_time),
+  ].join('|');
+}
+
+function buildExistingDowntimeIndexes(existingRows: ExistingDowntimeRow[]) {
+  const exactByKey = new Map<string, ExistingDowntimeRow>();
+  const canonicalByKey = new Map<string, ExistingDowntimeRow>();
+  for (const row of existingRows) {
+    const exactKey = downtimeExactKey(row);
+    if (!exactByKey.has(exactKey)) exactByKey.set(exactKey, row);
+    const canonicalKey = downtimeCanonicalKey(row);
+    if (!canonicalByKey.has(canonicalKey)) canonicalByKey.set(canonicalKey, row);
+  }
+  return { exactByKey, canonicalByKey };
+}
+
 function shouldUseAiFallback(parsed: { rows: ParsedWaDowntimeRow[]; skipped: Array<{ line: string; reason: string }> }) {
   if (!parsed.rows.length) return true;
+  const rawFallbackCount = parsed.rows.filter((row) => row.machine_match === 'raw').length;
   const lowConfidenceCount = parsed.rows.filter((row) => row.confidence !== 'high').length;
-  if (lowConfidenceCount > 0) return true;
+  if (rawFallbackCount > 0 && lowConfidenceCount > 0) return true;
+  if (rawFallbackCount > 2) return true;
+  if (lowConfidenceCount > parsed.rows.length / 2) return true;
   if (parsed.skipped.length > parsed.rows.length) return true;
   return false;
 }
@@ -1142,7 +1396,7 @@ function buildAiPrompt(text: string) {
     'Kamu parser laporan WhatsApp produksi/downtime pabrik.',
     'Ubah teks WA menjadi JSON strict tanpa markdown, tanpa komentar, tanpa code fence.',
     'Output schema:',
-    '{"blocks":[{"event_date":"YYYY-MM-DD","shift_code":"Shift 1|2|3","area":"","machine":"","rows":[{"event_date":"YYYY-MM-DD","shift_code":"Shift 1|2|3","area":"","machine":"","line":"","category":"setup|machine-trouble|material|mould|electrical|qc-hold|waiting-order|cleaning|minor-stop|other","start_time":"HH:MM","end_time":"HH:MM","duration_minutes":0,"status":"open|monitoring|closed","pic":"","root_cause":"","action_taken":"","estimated_loss_output":0,"linked_signal_type":"","source_line":"","confidence":"high|medium|low","warning":"","condition":"downtime|lancar|off|normal"}]}],"skipped":[{"line":"","reason":""}],"notes":["..."]}',
+    '{"blocks":[{"event_date":"YYYY-MM-DD","shift_code":"Shift 1|2|3","area":"","machine":"","rows":[{"event_date":"YYYY-MM-DD","shift_code":"Shift 1|2|3","area":"","machine":"","line":"","category":"setup|machine-trouble|material|mould|electrical|qc-hold|waiting-order|cleaning|minor-stop|other","start_time":"HH:MM","end_time":"HH:MM","duration_minutes":0,"status":"open|monitoring|closed","pic":"","root_cause":"","action_taken":"","estimated_loss_output":0,"linked_signal_type":"","source_line":"","confidence":"high|medium|low","warning":"","warning_code":"","match_code":"","match_reason":"","condition":"downtime|lancar|off|normal"}]}],"skipped":[{"line":"","reason":""}],"notes":["..."]}',
     'Aturan:',
     '- Kelompokkan per tanggal, shift, mesin/line, dan problem yang sama.',
     '- Jangan skip baris lancar/normal/aman/off; tetap buat row kondisi mesin.',
@@ -1198,6 +1452,9 @@ async function parseWithOpenAi(text: string): Promise<{ rows: ParsedWaDowntimeRo
       area: row.area || block.area || '',
       machine: row.machine || block.machine || '',
       line: row.line || row.machine || block.machine || '',
+      match_code: row.match_code || 'ai:parsed',
+      match_reason: row.match_reason || 'AI parser output.',
+      warning_code: row.warning_code || 'ai:parsed',
     }))).map(applyHighConfidenceTyposToRow);
     return { rows, skipped: parsed.skipped || [], notes: parsed.notes || [], model };
   } finally {
@@ -1243,6 +1500,9 @@ async function parseWithGemini(text: string): Promise<{ rows: ParsedWaDowntimeRo
       area: row.area || block.area || '',
       machine: row.machine || block.machine || '',
       line: row.line || row.machine || block.machine || '',
+      match_code: row.match_code || 'ai:parsed',
+      match_reason: row.match_reason || 'AI parser output.',
+      warning_code: row.warning_code || 'ai:parsed',
     }))).map(applyHighConfidenceTyposToRow);
     return { rows, skipped: parsed.skipped || [], notes: parsed.notes || [], model };
   } finally {
@@ -1384,23 +1644,106 @@ function insertRows(rows: ParsedWaDowntimeRow[], mode: string) {
           linked_signal_type = excluded.linked_signal_type,
           updated_at = datetime('now')
       `);
+      const updateById = db.prepare(`
+        UPDATE downtime_events
+        SET
+          event_date = ?,
+          shift_code = ?,
+          area = ?,
+          machine = ?,
+          line = ?,
+          category = ?,
+          start_time = ?,
+          end_time = ?,
+          duration_minutes = ?,
+          status = ?,
+          pic = ?,
+          root_cause = ?,
+          action_taken = ?,
+          estimated_loss_output = ?,
+          linked_signal_type = ?,
+          updated_at = datetime('now')
+        WHERE id = ?
+      `);
       let savedRows = 0;
       let insertedRows = 0;
       let updatedRows = 0;
       let existingRows = 0;
       let skippedRows = 0;
-      const existingForKey = db.prepare(`
-        SELECT 1 AS exists_flag
-        FROM downtime_events
-        WHERE event_date = ? AND shift_code = ? AND area = ? AND machine = ? AND line = ? AND category = ? AND start_time = ? AND end_time = ?
-        LIMIT 1
-      `);
-      for (const row of rows) {
+      const dates = [...new Set(rows.map((row) => row.event_date).filter(Boolean))];
+      const existingRowsForDates = dates.length
+        ? db.prepare(
+          `SELECT id, event_date, shift_code, area, machine, line, category, start_time, end_time, root_cause, action_taken, duration_minutes, status, pic, estimated_loss_output, linked_signal_type
+           FROM downtime_events
+           WHERE event_date IN (${dates.map(() => '?').join(',')})`
+        ).all(...dates) as ExistingDowntimeRow[]
+        : [];
+      const { exactByKey, canonicalByKey } = buildExistingDowntimeIndexes(existingRowsForDates);
+      for (const row of dedupeRows(rows)) {
         if (!row.event_date || !row.machine || !row.category || !row.start_time || !row.end_time) {
           skippedRows += 1;
           continue;
         }
-        const existedBefore = Boolean(existingForKey.get(row.event_date, row.shift_code, row.area, row.machine, row.line, row.category, row.start_time, row.end_time));
+        const exactKey = downtimeExactKey(row);
+        const canonicalKey = downtimeCanonicalKey(row);
+        const existingExact = exactByKey.get(exactKey);
+        const existingCanonical = exactByKey.get(exactKey) || canonicalByKey.get(canonicalKey);
+        if (existingExact) {
+          const result = insert.run(
+            row.event_date,
+            row.shift_code,
+            row.area,
+            row.machine,
+            row.line,
+            row.category,
+            row.start_time,
+            row.end_time,
+            row.duration_minutes,
+            row.status,
+            row.pic,
+            row.root_cause,
+            row.action_taken,
+            row.estimated_loss_output,
+            row.linked_signal_type,
+          );
+          if (Number(result.changes ?? 0) > 0) {
+            savedRows += 1;
+            updatedRows += 1;
+            existingRows += 1;
+          } else {
+            skippedRows += 1;
+          }
+          continue;
+        }
+        if (existingCanonical) {
+          const result = updateById.run(
+            row.event_date,
+            row.shift_code,
+            row.area,
+            row.machine,
+            row.line,
+            row.category,
+            row.start_time,
+            row.end_time,
+            row.duration_minutes,
+            row.status,
+            row.pic,
+            row.root_cause,
+            row.action_taken,
+            row.estimated_loss_output,
+            row.linked_signal_type,
+            existingCanonical.id,
+          );
+          if (Number(result.changes ?? 0) > 0) {
+            savedRows += 1;
+            updatedRows += 1;
+            existingRows += 1;
+            canonicalByKey.set(canonicalKey, existingCanonical);
+          } else {
+            skippedRows += 1;
+          }
+          continue;
+        }
         const result = insert.run(
           row.event_date,
           row.shift_code,
@@ -1420,12 +1763,30 @@ function insertRows(rows: ParsedWaDowntimeRow[], mode: string) {
         );
         if (Number(result.changes ?? 0) > 0) {
           savedRows += 1;
-          if (existedBefore) updatedRows += 1;
-          else insertedRows += 1;
+          insertedRows += 1;
+          const insertedRow: ExistingDowntimeRow = {
+            id: Number(result.lastInsertRowid ?? 0),
+            event_date: row.event_date,
+            shift_code: row.shift_code,
+            area: row.area,
+            machine: row.machine,
+            line: row.line,
+            category: row.category,
+            start_time: row.start_time,
+            end_time: row.end_time,
+            root_cause: row.root_cause,
+            action_taken: row.action_taken,
+            duration_minutes: row.duration_minutes,
+            status: row.status,
+            pic: row.pic,
+            estimated_loss_output: row.estimated_loss_output,
+            linked_signal_type: row.linked_signal_type,
+          };
+          exactByKey.set(exactKey, insertedRow);
+          canonicalByKey.set(canonicalKey, insertedRow);
         } else {
           skippedRows += 1;
         }
-        if (existedBefore) existingRows += 1;
       }
       db.exec('COMMIT');
       const total = db.prepare('SELECT COUNT(*) AS count FROM downtime_events').get() as { count: number };

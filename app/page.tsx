@@ -295,6 +295,8 @@ type DowntimeWaParsedRow = {
   machine_raw?: string;
   machine_normalized?: string;
   machine_match?: 'family' | 'alias' | 'raw';
+  match_code?: string;
+  match_reason?: string;
   line: string;
   category: DowntimeEventCategory;
   start_time: string;
@@ -309,6 +311,7 @@ type DowntimeWaParsedRow = {
   source_line: string;
   confidence: 'high' | 'medium' | 'low';
   warning: string;
+  warning_code?: string;
   condition?: 'downtime' | 'lancar' | 'off' | 'normal' | 'standby' | 'setup' | 'cleaning' | 'trial' | 'running' | 'changeover' | 'unknown';
 };
 
@@ -333,6 +336,8 @@ type DowntimeWaParseResult = {
     machine_raw: string;
     machine_normalized: string;
     machine_match: 'family' | 'alias' | 'raw';
+    match_code: string;
+    match_reason: string;
     start: string;
     end: string;
     durasi_menit: number;
@@ -344,6 +349,7 @@ type DowntimeWaParseResult = {
     area: string;
     category: string;
     confidence: string;
+    warning_code: string;
   }>;
   productionRows?: Array<{
     tanggal: string;
@@ -354,6 +360,8 @@ type DowntimeWaParseResult = {
     machine_raw: string;
     machine_normalized: string;
     machine_match: 'family' | 'alias' | 'raw';
+    match_code: string;
+    match_reason: string;
     product: string;
     metric_hasil: string;
     metric_reject_print: string;
@@ -1339,6 +1347,8 @@ export default function Home() {
     machine_raw: row.machine_raw || row.source_line,
     machine_normalized: row.machine_normalized || normalizeCode(row.machine),
     machine_match: row.machine_match || 'raw',
+    match_code: row.match_code || '',
+    match_reason: row.match_reason || '',
     start: row.start_time,
     end: row.end_time,
     durasi_menit: row.duration_minutes,
@@ -1350,6 +1360,7 @@ export default function Home() {
     area: row.area,
     category: row.category,
     confidence: row.confidence,
+    warning_code: row.warning_code || '',
   });
 
   const detectLocalDowntimeDuplicates = (rows: DowntimeWaParsedRow[]) => {
@@ -2965,8 +2976,8 @@ export default function Home() {
                             <summary><span>Structured Output Preview</span><em>{numberFmt.format(downtimeWaResult.structuredRows.length)} row · buka jika perlu cek hasil teknis</em></summary>
                             <div className="detail-table-scroll downtime-wa-table-wrap">
                               <table className="detail-table downtime-wa-table">
-                                <thead><tr><th>Tanggal</th><th>Shift</th><th>Area</th><th>Machine Master</th><th>Machine Raw</th><th>Match</th><th>Start</th><th>End</th><th className="num">Durasi</th><th>Reason</th><th>Condition</th><th>Confidence</th></tr></thead>
-                                <tbody>{downtimeWaResult.structuredRows.slice(0, 100).map((row, index) => <tr key={`${row.tanggal}-${row.machine_master}-${row.start}-${index}`}><td>{row.tanggal}</td><td>{row.shift_code}</td><td>{row.area}</td><td><strong>{row.machine_master || '-'}</strong></td><td>{row.machine_raw || '-'}</td><td>{row.machine_match || '-'}</td><td>{row.start || '-'}</td><td>{row.end || '-'}</td><td className="num">{numberFmt.format(row.durasi_menit || 0)}</td><td><SmartText value={row.reason || row.category || '-'} maxChars={42} /></td><td>{row.condition || '-'}</td><td><span className={`status-badge ${row.confidence === 'high' ? 'above-target' : row.confidence === 'medium' ? 'on-track' : 'under-target'}`}>{row.confidence || '-'}</span></td></tr>)}</tbody>
+                                <thead><tr><th>Tanggal</th><th>Shift</th><th>Area</th><th>Machine Master</th><th>Machine Raw</th><th>Match</th><th>Match Code</th><th>Start</th><th>End</th><th className="num">Durasi</th><th>Reason</th><th>Condition</th><th>Confidence</th></tr></thead>
+                                <tbody>{downtimeWaResult.structuredRows.slice(0, 100).map((row, index) => <tr key={`${row.tanggal}-${row.machine_master}-${row.start}-${index}`}><td>{row.tanggal}</td><td>{row.shift_code}</td><td>{row.area}</td><td><strong>{row.machine_master || '-'}</strong></td><td>{row.machine_raw || '-'}</td><td>{row.machine_match || '-'}</td><td>{row.match_code ? <span className="status-badge on-track">{row.match_code}</span> : '-'}</td><td>{row.start || '-'}</td><td>{row.end || '-'}</td><td className="num">{numberFmt.format(row.durasi_menit || 0)}</td><td><SmartText value={row.reason || row.category || '-'} maxChars={42} /></td><td>{row.condition || '-'}</td><td><span className={`status-badge ${row.confidence === 'high' ? 'above-target' : row.confidence === 'medium' ? 'on-track' : 'under-target'}`}>{row.confidence || '-'}</span>{row.warning_code ? <><br/><span className="muted">{row.warning_code}</span></> : null}</td></tr>)}</tbody>
                               </table>
                             </div>
                           </details>
@@ -2991,7 +3002,7 @@ export default function Home() {
                                     <div className="detail-table-scroll downtime-wa-table-wrap">
                                       <table className="detail-table downtime-wa-table">
                                         <thead><tr><th>Waktu</th><th className="num">Durasi</th><th>Problem</th><th>Action</th><th>Confidence</th></tr></thead>
-                                        <tbody>{block.rows.map((row, rowIndex) => <tr key={`${block.label}-${rowIndex}-${row.start_time}`}><td>{row.start_time} - {row.end_time}</td><td className="num">{numberFmt.format(row.duration_minutes)} menit</td><td><SmartText value={row.root_cause || '-'} maxChars={42} /></td><td><SmartText value={row.action_taken || row.warning || '-'} maxChars={42} /></td><td><span className={`status-badge ${row.confidence === 'high' ? 'above-target' : row.confidence === 'medium' ? 'on-track' : 'under-target'}`}>{row.confidence}</span></td></tr>)}</tbody>
+                                        <tbody>{block.rows.map((row, rowIndex) => <tr key={`${block.label}-${rowIndex}-${row.start_time}`}><td>{row.start_time} - {row.end_time}</td><td className="num">{numberFmt.format(row.duration_minutes)} menit</td><td><SmartText value={row.root_cause || '-'} maxChars={42} /></td><td><SmartText value={row.action_taken || row.warning || '-'} maxChars={42} /></td><td><span className={`status-badge ${row.confidence === 'high' ? 'above-target' : row.confidence === 'medium' ? 'on-track' : 'under-target'}`}>{row.confidence}</span>{row.match_code ? <><br/><span className="muted">{row.match_code}</span></> : null}</td></tr>)}</tbody>
                                       </table>
                                     </div>
                                   </div>
@@ -3003,7 +3014,7 @@ export default function Home() {
 
                         <details className="table-disclosure" open>
                           <summary><span>Downtime Event Preview</span><em>{numberFmt.format((downtimeWaResult.rows || []).length)} row · cek sebelum save</em></summary>
-                          <div className="detail-table-scroll"><table className="detail-table"><thead><tr><th>#</th><th>Tanggal</th><th>Shift</th><th>Area</th><th>Mesin</th><th>Start</th><th>End</th><th className="num">Durasi</th><th>Condition</th><th>Reason</th><th>Confidence</th><th>Aksi</th></tr></thead><tbody>{(downtimeWaResult.rows || []).slice(0, 80).map((row, index) => downtimeWaEditingRowIndex === index && downtimeWaRowDraft ? <tr key={`${row.machine}-${index}`}><td>{index + 1}</td><td><input className="detail-table-input" type="date" value={downtimeWaRowDraft.event_date} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, event_date: e.target.value })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.shift_code} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, shift_code: e.target.value })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.area} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, area: e.target.value })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.machine} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, machine: e.target.value })} /></td><td><input className="detail-table-input" type="time" value={downtimeWaRowDraft.start_time} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, start_time: e.target.value })} /></td><td><input className="detail-table-input" type="time" value={downtimeWaRowDraft.end_time} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, end_time: e.target.value })} /></td><td className="num"><input className="detail-table-input" value={downtimeWaRowDraft.duration_minutes} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, duration_minutes: toNumber(e.target.value) })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.condition || ''} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, condition: e.target.value as DowntimeWaParsedRow['condition'] })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.root_cause || ''} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, root_cause: e.target.value })} /></td><td>{downtimeWaRowDraft.confidence}</td><td><button className="btn secondary table-mini-btn" type="button" onClick={saveEditingDowntimeWaRow}>Save</button><button className="btn secondary table-mini-btn" type="button" onClick={cancelEditingDowntimeWaRow}>Cancel</button></td></tr> : <tr key={`${row.machine}-${index}`} className={downtimeWaResult.duplicateHints?.some((hint) => hint.row_index === index) ? 'target-alert-row' : ''}><td>{index + 1}</td><td>{row.event_date}</td><td>{row.shift_code}</td><td>{row.area}</td><td><strong>{row.machine}</strong><br/><span className="muted">{deriveDowntimeWaStructuredRow(row).machine_match}</span></td><td>{row.start_time}</td><td>{row.end_time}</td><td className="num">{decimalFmt.format(row.duration_minutes)}</td><td>{row.condition || '-'}</td><td>{row.root_cause || row.category}</td><td>{row.confidence}{row.warning ? <><br/><span className="muted">{row.warning}</span></> : null}</td><td><button className="btn secondary table-mini-btn" type="button" onClick={() => startEditingDowntimeWaRow(index)}>Edit</button><button className="btn secondary table-mini-btn" type="button" onClick={() => applyDowntimeWaRowToSimilar(index, { machine: row.machine, area: row.area })}>Apply Similar</button></td></tr>)}</tbody></table></div>
+                          <div className="detail-table-scroll"><table className="detail-table"><thead><tr><th>#</th><th>Tanggal</th><th>Shift</th><th>Area</th><th>Mesin</th><th>Start</th><th>End</th><th className="num">Durasi</th><th>Condition</th><th>Reason</th><th>Confidence</th><th>Aksi</th></tr></thead><tbody>{(downtimeWaResult.rows || []).slice(0, 80).map((row, index) => downtimeWaEditingRowIndex === index && downtimeWaRowDraft ? <tr key={`${row.machine}-${index}`}><td>{index + 1}</td><td><input className="detail-table-input" type="date" value={downtimeWaRowDraft.event_date} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, event_date: e.target.value })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.shift_code} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, shift_code: e.target.value })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.area} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, area: e.target.value })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.machine} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, machine: e.target.value })} /></td><td><input className="detail-table-input" type="time" value={downtimeWaRowDraft.start_time} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, start_time: e.target.value })} /></td><td><input className="detail-table-input" type="time" value={downtimeWaRowDraft.end_time} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, end_time: e.target.value })} /></td><td className="num"><input className="detail-table-input" value={downtimeWaRowDraft.duration_minutes} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, duration_minutes: toNumber(e.target.value) })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.condition || ''} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, condition: e.target.value as DowntimeWaParsedRow['condition'] })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.root_cause || ''} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, root_cause: e.target.value })} /></td><td>{downtimeWaRowDraft.confidence}{downtimeWaRowDraft.warning_code ? <><br/><span className="muted">{downtimeWaRowDraft.warning_code}</span></> : null}</td><td><button className="btn secondary table-mini-btn" type="button" onClick={saveEditingDowntimeWaRow}>Save</button><button className="btn secondary table-mini-btn" type="button" onClick={cancelEditingDowntimeWaRow}>Cancel</button></td></tr> : <tr key={`${row.machine}-${index}`} className={downtimeWaResult.duplicateHints?.some((hint) => hint.row_index === index) ? 'target-alert-row' : ''}><td>{index + 1}</td><td>{row.event_date}</td><td>{row.shift_code}</td><td>{row.area}</td><td><strong>{row.machine}</strong><br/><span className="muted">{deriveDowntimeWaStructuredRow(row).machine_match}</span>{row.match_code ? <><br/><span className="status-badge on-track">{row.match_code}</span></> : null}{row.match_reason ? <><br/><span className="muted">{row.match_reason}</span></> : null}</td><td>{row.start_time}</td><td>{row.end_time}</td><td className="num">{decimalFmt.format(row.duration_minutes)}</td><td>{row.condition || '-'}</td><td>{row.root_cause || row.category}</td><td>{row.confidence}{row.warning_code ? <><br/><span className="muted">{row.warning_code}</span></> : null}{row.warning ? <><br/><span className="muted">{row.warning}</span></> : null}</td><td><button className="btn secondary table-mini-btn" type="button" onClick={() => startEditingDowntimeWaRow(index)}>Edit</button><button className="btn secondary table-mini-btn" type="button" onClick={() => applyDowntimeWaRowToSimilar(index, { machine: row.machine, area: row.area })}>Apply Similar</button></td></tr>)}</tbody></table></div>
                         </details>
 
                       </section>

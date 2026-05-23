@@ -4,7 +4,7 @@ Dashboard internal untuk monitoring output produksi PPIC dari Business Central O
 
 ## Current Stage
 
-**Planning / PRD**
+**Deploy / Ops Hardening**
 
 ## Source Data Snapshot
 
@@ -81,6 +81,9 @@ Mode **AI** / **Hybrid** bisa pakai **Gemini** atau **OpenAI**.
 
 Parser WA juga punya **auto-correct typo konservatif** untuk kata/frasa yang sangat yakin, misalnya istilah downtime yang sering salah tulis di `root_cause`, `action_taken`, dan note pendukung. Koreksi ini hanya aktif kalau confidence-nya tinggi, dan hasilnya tetap ditandai di warning agar transparan.
 
+Saat ini parser juga membawa **alias registry eksplisit** untuk machine master, plus kode ringkas seperti `match_code` dan `warning_code` supaya preview bisa diaudit cepat tanpa menebak-nebak kenapa sebuah baris jatuh ke master tertentu.
+Save ulang hasil preview juga lebih tahan alias drift: exact key tetap dipakai kalau cocok, dan kalau machine/line-nya bergeser label tapi canonical key-nya sama, server akan update baris existing instead of bikin duplikat baru.
+
 Roadmap penguatan parser WA dan normalizer ada di `docs/wa-parser-roadmap.md`. Itu jadi acuan urutan pengerjaan kalau kita lanjut hardening parser:
 
 1. bekukan schema output
@@ -89,13 +92,17 @@ Roadmap penguatan parser WA dan normalizer ada di `docs/wa-parser-roadmap.md`. I
 4. tambah observability preview
 5. harden import safety
 6. rapikan AI fallback terakhir
+7. simpan fixture regresi WA dan catatan contoh di docs
 
 Fitur lain yang sudah ada di halaman parser:
 - **Preview Parse** dan **Save Parsed Result** dipisah
 - **Preview diff sebelum save**
 - **Alias manager per area**
 - **Auto-suggest / auto-apply alias** dari histori untuk row confidence tinggi
+- **Kode preview** untuk match/alasan parser yang bisa dibaca cepat
 - **Download CSV lengkap** dari hasil parsing
+
+Fixture contoh parser dan catatan regresi ada di `docs/wa-parser-fixtures.md`.
 
 Set key di `.env.local`:
 
@@ -152,3 +159,14 @@ Current layout follows Shadcn/UI Sidebar composition: `SidebarProvider`, `Sideba
 Visual language follows `docs/design.md`: Notion Beige / workspace-calm with warm off-white foundation, near-black text, restrained coral as the single interaction accent, Inter typography, flat surfaces, and no gradients.
 
 See `RUNBOOK.md` for operation notes.
+
+### Local runtime
+
+For this workspace, the app is also exposed as a user service:
+
+- `ppic-output-dashboard-dev.service`
+- `MemoryHigh=512M`
+- `MemoryMax=1.9G`
+- `MemorySwapMax=1.9G`
+
+This keeps the dev server responsive while making it more willing to spill into swap under memory pressure.
