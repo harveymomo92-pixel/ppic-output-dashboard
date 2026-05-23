@@ -63,6 +63,8 @@ Expected:
 
 ## Fixture 4 — Produksi summary
 
+Catatan: contoh ini masih diperlakukan sebagai sample manual-only. Parser produksi butuh format yang lebih kaya dari sampel di bawah untuk benar-benar keluar sebagai `productionRows` stabil.
+
 ```text
 TOTAL HASIL PRINTING
 OMSO 1: Hasil = 12000
@@ -72,7 +74,7 @@ Produktivitas = 92.5%
 
 Expected:
 
-- masuk ke parser produksi
+- saat format produksi diperkaya, harus masuk ke parser produksi
 - `machine_match = family`
 - `match_code` menjelaskan header family yang dipakai
 - `source_line` tetap menyimpan ringkasan teks asli
@@ -80,5 +82,6 @@ Expected:
 ## Fixture policy
 
 1. Fixture baru harus ditulis dengan format teks WA yang mendekati aslinya.
-2. Setiap fixture baru idealnya punya expected `match_code`, `warning_code`, dan `condition`.
+2. Setiap fixture downtime idealnya punya expected `match_code`, `warning_code`, dan `condition`.
 3. Kalau parser diubah, fixture ini harus diperiksa ulang sebelum behavior dianggap stabil.
+4. Fixture produksi boleh tetap manual-only sampai format sampelnya benar-benar cukup untuk parser runtime.

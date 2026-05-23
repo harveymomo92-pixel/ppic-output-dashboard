@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "test:wa-parser": "node scripts/test-wa-parser.mjs",
     "db:init": "node scripts/init-db.mjs",
     "db:sync": "node scripts/sync-odata.mjs",
     "db:import-downtime": "node scripts/import-downtime.mjs"
