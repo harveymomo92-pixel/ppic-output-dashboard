@@ -13,7 +13,7 @@ import {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-const WA_PARSER_CONTRACT_VERSION = 'wa-downtime-v4';
+const WA_PARSER_CONTRACT_VERSION = 'wa-downtime-v5';
 
 type ParsedWaDowntimeRow = {
   event_date: string;
@@ -815,6 +815,11 @@ type ProductionBlockState = {
   condition: 'running' | 'off' | 'standby' | 'unknown';
 };
 
+type ProductionParseResult = {
+  summaryRows: ProductionSummaryRow[];
+  downtimeRows: ParsedWaDowntimeRow[];
+};
+
 function blankProductionState(section: 'PRINTING' | 'THERMOFORMING'): ProductionBlockState {
   return {
     section,
@@ -897,17 +902,65 @@ function finalizeProductionBlock(block: ProductionBlockState | null): Production
   };
 }
 
-function parseProductionReport(text: string, catalog: MachineCatalog): ProductionSummaryRow[] {
-  const rows: ProductionSummaryRow[] = [];
+function parseProductionDurationMinutes(line: string) {
+  const text = stripWaMarkdown(line);
+  const patterns = [
+    /\(\s*(\d{1,4})\s*(?:menit|mnt|min)?\s*\)/i,
+    /\b(?:durasi|lama)\s*[:=]?\s*(\d{1,4})\s*(?:menit|mnt|min)?\b/i,
+    /\b(\d{1,4})\s*(?:menit|mnt|min)\b/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) return Number(match[1]);
+  }
+  return null;
+}
+
+function isProductionDowntimeBullet(line: string) {
+  const source = autoCorrectHighConfidenceTypos(line).text;
+  const text = normalizeText(source);
+  if (!text) return false;
+  if (/^(hasil|reject|produktifitas|produktivitas|sisa order|ct|speed|operator|op|mc|machine)\b/i.test(text)) return false;
+  if (!parseProductionDurationMinutes(source)) return false;
+  return true;
+}
+
+function buildProductionDowntimeRow(block: ProductionBlockState, line: string, sourceOrder: number): ParsedWaDowntimeRow | null {
+  if (!isProductionDowntimeBullet(line)) return null;
+  const timing = parseProblemTiming(line, { eventDate: block.date, shiftCode: block.shiftCode });
+  const context: ParserContext = {
+    eventDate: block.date,
+    shiftCode: block.shiftCode,
+    machine: block.machine,
+    machineRaw: block.machineRaw,
+    machineNormalized: block.machineNormalized,
+    machineMatch: block.machineMatch,
+    machineMatchCode: block.matchCode,
+    machineMatchReason: block.matchReason,
+    area: block.section,
+    lastEventIndex: -1,
+    inProblem: true,
+  };
+  return makeRow(context, line, timing, sourceOrder, {
+    area: block.section,
+    category: inferCategory(line),
+    confidence: timing?.confidence || 'medium',
+  });
+}
+
+function parseProductionReport(text: string, catalog: MachineCatalog): ProductionParseResult {
+  const summaryRows: ProductionSummaryRow[] = [];
+  const downtimeRows: ParsedWaDowntimeRow[] = [];
   const lines = text.split(/\r?\n/).map((line) => stripWaMarkdown(line)).filter(Boolean);
   let currentSection: '' | 'PRINTING' | 'THERMOFORMING' = '';
   let sectionDate = '';
   let sectionShift = '';
   let current: ProductionBlockState | null = null;
+  let sourceOrder = 0;
 
   const flush = () => {
     const row = finalizeProductionBlock(current);
-    if (row) rows.push(row);
+    if (row) summaryRows.push(row);
     current = null;
   };
 
@@ -964,29 +1017,37 @@ function parseProductionReport(text: string, catalog: MachineCatalog): Productio
     if (!current) continue;
     current.sourceLines.push(line);
 
+    const cleaned = formatMetricLine(line);
     if (currentSection === 'PRINTING') {
-      const cleaned = formatMetricLine(line);
       if (/^hasil[:=]/i.test(cleaned)) current.metrics.hasil = clean(cleaned.replace(/^hasil[:=]\s*/i, ''));
       else if (/^(reject print|r\.print)[:=]/i.test(cleaned)) current.metrics.reject_print = clean(cleaned.replace(/^(reject print|r\.print)[:=]\s*/i, ''));
       else if (/^(reject polos|r\.polos)[:=]/i.test(cleaned)) current.metrics.reject_polos = clean(cleaned.replace(/^(reject polos|r\.polos)[:=]\s*/i, ''));
       else if (/^(reject set up|r\.set up)[:=]/i.test(cleaned)) current.metrics.reject_setup = clean(cleaned.replace(/^(reject set up|r\.set up)[:=]\s*/i, ''));
       else if (/^%reject[:=]/i.test(cleaned)) current.metrics.reject_pct = clean(cleaned.replace(/^%reject[:=]\s*/i, ''));
       else if (/^produktifitas|^produktivitas/i.test(cleaned)) current.metrics.productivity = clean(cleaned.replace(/^(produktifitas|produktivitas)[:=]\s*/i, ''));
-      else current.notes.push(autoCorrectHighConfidenceTypos(cleaned).text);
+      else {
+        const downtimeRow = buildProductionDowntimeRow(current, cleaned, sourceOrder);
+        if (downtimeRow) downtimeRows.push(downtimeRow);
+        else current.notes.push(autoCorrectHighConfidenceTypos(cleaned).text);
+      }
     } else {
-      const cleaned = formatMetricLine(line);
       if (/^hasil\s*[:=]/i.test(cleaned)) current.metrics.hasil = clean(cleaned.replace(/^hasil\s*[:=]\s*/i, ''));
       else if (/^(rijek sheet|reject sheet)\s*[:=]/i.test(cleaned)) current.metrics.reject_sheet = clean(cleaned.replace(/^(rijek sheet|reject sheet)\s*[:=]\s*/i, ''));
       else if (/^(rijek cup|rejeck cup|reject cup)\s*[:=]/i.test(cleaned)) current.metrics.reject_cup = clean(cleaned.replace(/^(rijek cup|rejeck cup|reject cup)\s*[:=]\s*/i, ''));
       else if (/^sisa order\s*[:=]/i.test(cleaned)) current.metrics.sisa_order = clean(cleaned.replace(/^sisa order\s*[:=]\s*/i, ''));
       else if (/^ct\s*[:=]/i.test(cleaned)) current.metrics.ct = clean(cleaned.replace(/^ct\s*[:=]\s*/i, ''));
-      else if (/^\-/.test(cleaned) || /mc off|close order|ganti produk|lanjut/i.test(cleaned)) current.notes.push(autoCorrectHighConfidenceTypos(cleaned).text);
-      else current.notes.push(autoCorrectHighConfidenceTypos(cleaned).text);
+      else {
+        const downtimeRow = buildProductionDowntimeRow(current, cleaned, sourceOrder);
+        if (downtimeRow) downtimeRows.push(downtimeRow);
+        else if (/^\-/.test(cleaned) || /mc off|close order|ganti produk|lanjut/i.test(cleaned)) current.notes.push(autoCorrectHighConfidenceTypos(cleaned).text);
+        else current.notes.push(autoCorrectHighConfidenceTypos(cleaned).text);
+      }
     }
+    sourceOrder += 1;
   }
 
   flush();
-  return rows;
+  return { summaryRows, downtimeRows };
 }
 
 function stripWaMarkdown(input: string) {
@@ -1145,7 +1206,8 @@ function normalizeTime(raw: string) {
 }
 
 function parseProblemTiming(line: string, context: Pick<ParserContext, 'eventDate' | 'shiftCode'>) {
-  const text = normalizeText(line);
+  const text = stripWaMarkdown(line);
+  const normalized = normalizeText(line);
   const range = text.match(/(?:\(|\b)(\d{1,2}[.:]\d{2})\s*[-–]\s*(\d{1,2}[.:]\d{2})(?:\s*=\s*(\d{1,4})\s*(?:menit|mnt|min)?)?/i);
   if (range) {
     const start = normalizeTime(range[1]);
@@ -1154,7 +1216,20 @@ function parseProblemTiming(line: string, context: Pick<ParserContext, 'eventDat
     return { start, end, duration, confidence: 'high' as const, warning: '' };
   }
 
-  const durationMatch = text.match(/(\d{1,4})\s*(?:menit|mnt|min)\b/i);
+  const parentheticalDuration = text.match(/\(\s*(\d{1,4})\s*(?:menit|mnt|min)?\s*\)/i);
+  if (parentheticalDuration) {
+    const duration = Number(parentheticalDuration[1]);
+    const shiftWindow = resolveShiftWindow(context.shiftCode);
+    return {
+      start: shiftWindow.start,
+      end: addMinutes(shiftWindow.start, duration),
+      duration,
+      confidence: 'medium' as const,
+      warning: 'Durasi di dalam kurung dipakai sebagai estimasi; jam tidak disebut di WA.',
+    };
+  }
+
+  const durationMatch = normalized.match(/(\d{1,4})\s*(?:menit|mnt|min)\b/i);
   if (durationMatch) {
     const duration = Number(durationMatch[1]);
     const shiftWindow = resolveShiftWindow(context.shiftCode);
@@ -1209,7 +1284,7 @@ function inferCategory(problem: string) {
   if (/ciler|chiller|trip|breker|breaker|panel|sdp|listrik|power/.test(text)) return 'electrical';
   if (/preform|material|loaded|ganjel|bahan/.test(text)) return 'material';
   if (/mould|mold|dies/.test(text)) return 'mould';
-  if (/setting|seting|setup|ct\b|cycle/.test(text)) return 'setup';
+  if (/setting|seting|setup|ct\b|cycle|lap\b|sett\b|alarm|sensor|blanket|roll|loading|unloading|screw|plate|synchronism|ganti/.test(text)) return 'setup';
   if (/qc|quality|reject|rijek/.test(text)) return 'qc-hold';
   if (/off|order|cp\b|tunggu/.test(text)) return 'waiting-order';
   if (/stop|mesin|trouble|macet/.test(text)) return 'machine-trouble';
@@ -1255,6 +1330,7 @@ function shouldCreateOffRow(line: string) {
 function removeTimingFromCause(line: string) {
   return stripWaMarkdown(line)
     .replace(/\(?\s*\d{1,2}[.:]\d{2}\s*[-–]\s*\d{1,2}[.:]\d{2}\s*(=\s*\d{1,4}\s*(menit|mnt|min)?)?\)?/ig, '')
+    .replace(/\(\s*\d{1,4}\s*(?:menit|mnt|min)?\s*\)/ig, '')
     .replace(/\b\d{1,4}\s*(menit|mnt|min)\b/ig, '')
     .replace(/^[:=\-–\s]+/, '')
     .trim();
@@ -1771,6 +1847,8 @@ function buildAiPrompt(text: string) {
     'Output schema:',
     '{"blocks":[{"event_date":"YYYY-MM-DD","shift_code":"Shift 1|2|3","area":"","machine":"","rows":[{"event_date":"YYYY-MM-DD","shift_code":"Shift 1|2|3","area":"","machine":"","machine_raw":"","machine_normalized":"","machine_match":"family|alias|raw","match_source":"","match_code":"","match_reason":"","line":"","category":"setup|machine-trouble|material|mould|electrical|qc-hold|waiting-order|cleaning|minor-stop|other","start_time":"HH:MM","end_time":"HH:MM","duration_minutes":0,"status":"open|monitoring|closed","pic":"","root_cause":"","action_taken":"","estimated_loss_output":0,"linked_signal_type":"","source_line":"","confidence":"high|medium|low","warning":"","warning_code":"","condition":"downtime|lancar|off|normal|standby|setup|cleaning|trial|running"}]}],"skipped":[{"line":"","reason":""}],"notes":["..."]}',
     'Aturan:',
+    '- Semua field teks operasional harus tetap dalam Bahasa Indonesia; jangan menerjemahkan ke bahasa Inggris.',
+    '- Kalau sumber campur bahasa, pertahankan bahasa sumber yang paling natural dan hanya perbaiki typo ringan.',
     '- Kelompokkan per tanggal, shift, mesin/line, dan problem yang sama.',
     '- Jangan skip baris lancar/normal/aman/off; tetap buat row kondisi mesin.',
     '- Jika ada jam/range/durasi, isi start/end/duration seakurat mungkin.',
@@ -2351,13 +2429,15 @@ export async function POST(request: NextRequest) {
   const parsed = providedRows
     ? { rows: providedRows, stateRows: [] as ParsedWaDowntimeRow[], skipped: [] as Array<{ line: string; reason: string }>, processedLines: Number(body.processedLines || 0), notes: Array.isArray(body.notes) ? body.notes as string[] : [], aiUsed: Boolean(body.aiUsed), aiModel: value(body.aiModel), aiProvider: value(body.aiProviderUsed || body.aiProvider) }
     : await parseWaReportHybrid(text, parserMode, aiProvider, catalog);
-  const sortedRows = [...parsed.rows].map(applyShiftWindowFallback).sort((a, b) => compareDowntimeRows(a, b, machineOrderMap));
+  const productionParse = parseProductionReport(text, catalog);
+  const productionDowntimeRows = productionParse.downtimeRows;
+  const sortedRows = dedupeRows([...(parsed.rows || []), ...productionDowntimeRows]).map(applyShiftWindowFallback).sort((a, b) => compareDowntimeRows(a, b, machineOrderMap));
   const sortedStateRows = [...(parsed.stateRows || [])].map(applyShiftWindowFallback).sort((a, b) => compareDowntimeRows(a, b, machineOrderMap));
   const collapsedRows = collapseStateCompanionDowntimeRows(sortedRows, sortedStateRows);
   const dedupedStateRows = dedupeStateRowsAgainstRows(collapsedRows, sortedStateRows);
   const blocks = buildPreviewBlocks(collapsedRows, machineOrderMap);
   const structuredRows = Array.isArray(body.structuredRows) ? body.structuredRows as WaStructuredRow[] : buildStructuredRows(collapsedRows, dedupedStateRows, machineOrderMap);
-  const productionRows = Array.isArray(body.productionRows) ? body.productionRows as ProductionSummaryRow[] : parseProductionReport(text, catalog);
+  const productionRows = Array.isArray(body.productionRows) ? body.productionRows as ProductionSummaryRow[] : productionParse.summaryRows;
   const parserMeta = {
     contractVersion: WA_PARSER_CONTRACT_VERSION,
     aliasRegistrySize: catalog.aliases.length,
