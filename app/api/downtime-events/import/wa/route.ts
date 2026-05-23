@@ -5,6 +5,7 @@ import { buildMachineSynonymPack, normalizeMachineAliasText } from '@/lib/dashbo
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+const WA_PARSER_CONTRACT_VERSION = 'wa-downtime-v4';
 
 type ParsedWaDowntimeRow = {
   event_date: string;
@@ -14,8 +15,10 @@ type ParsedWaDowntimeRow = {
   machine_raw?: string;
   machine_normalized?: string;
   machine_match?: 'family' | 'alias' | 'raw';
+  match_source?: string;
   match_code?: string;
   match_reason?: string;
+  idempotency_key?: string;
   line: string;
   category: string;
   start_time: string;
@@ -67,6 +70,8 @@ type DuplicateHint = {
   machine_normalized: string;
   start_time: string;
   end_time: string;
+  duplicate_key: string;
+  match_source: string;
   reason: string;
 };
 
@@ -76,8 +81,10 @@ type WaStructuredRow = {
   machine_raw: string;
   machine_normalized: string;
   machine_match: 'family' | 'alias' | 'raw';
+  match_source: string;
   match_code: string;
   match_reason: string;
+  idempotency_key: string;
   start: string;
   end: string;
   durasi_menit: number;
@@ -101,8 +108,10 @@ type ProductionSummaryRow = {
   machine_raw: string;
   machine_normalized: string;
   machine_match: 'family' | 'alias' | 'raw';
+  match_source: string;
   match_code: string;
   match_reason: string;
+  idempotency_key: string;
   product: string;
   metric_hasil: string;
   metric_reject_print: string;
@@ -168,6 +177,33 @@ function compactKey(input: string) {
     .replace(/[^a-z0-9]+/g, '');
 }
 
+function buildDowntimeWaIdempotencyKey(row: Pick<ParsedWaDowntimeRow, 'event_date' | 'shift_code' | 'area' | 'machine' | 'machine_normalized' | 'line' | 'category' | 'start_time' | 'end_time' | 'root_cause' | 'action_taken' | 'condition'>) {
+  return [
+    clean(row.event_date),
+    clean(row.shift_code),
+    clean(row.area).toUpperCase(),
+    machineKey(row.machine_normalized || row.machine),
+    machineKey(row.line || row.machine),
+    clean(row.category).toLowerCase(),
+    clean(row.start_time),
+    clean(row.end_time),
+    compactKey(row.root_cause),
+    compactKey(row.action_taken),
+    clean(row.condition || '').toLowerCase(),
+  ].join('|');
+}
+
+function buildDowntimeWaMatchSource(machineMatch: 'family' | 'alias' | 'raw', matchCode: string, matchReason: string) {
+  if (matchCode.startsWith('family:')) return matchCode;
+  if (machineMatch === 'alias') {
+    const sourceMatch = matchReason.match(/\bvia\s+([a-z_]+):/i);
+    if (sourceMatch?.[1]) return sourceMatch[1].toLowerCase();
+    return 'alias_registry';
+  }
+  if (machineMatch === 'family') return matchCode || 'family';
+  return 'raw:fallback';
+}
+
 function inferMachineFamilyLabel(text: string) {
   const normalized = normalizeMachineAliasText(text);
   if (/longsun/.test(normalized)) return 'Longsun';
@@ -199,6 +235,7 @@ type MachineResolution = {
   machineRaw: string;
   machineNormalized: string;
   machineMatch: 'family' | 'alias' | 'raw';
+  matchSource: string;
   matchCode: string;
   matchReason: string;
   area: string;
@@ -282,7 +319,7 @@ function detectDuplicateHints(rows: ParsedWaDowntimeRow[], existingRows: Array<{
 
   rows.forEach((row, index) => {
     const machineNorm = row.machine_normalized || machineKey(row.machine);
-    const internalKey = [row.event_date, row.shift_code, machineNorm, row.start_time, row.end_time, compactKey(row.root_cause)].join('|');
+    const internalKey = row.idempotency_key || [row.event_date, row.shift_code, machineNorm, row.start_time, row.end_time, compactKey(row.root_cause), compactKey(row.action_taken)].join('|');
     const firstIndex = seen.get(internalKey);
     if (firstIndex !== undefined) {
       hints.push({
@@ -294,6 +331,8 @@ function detectDuplicateHints(rows: ParsedWaDowntimeRow[], existingRows: Array<{
         machine_normalized: machineNorm,
         start_time: row.start_time,
         end_time: row.end_time,
+        duplicate_key: internalKey,
+        match_source: row.match_source || row.match_code || 'raw:fallback',
         reason: `Duplikat dengan baris ${firstIndex + 1} pada hasil parse`,
       });
     } else {
@@ -314,6 +353,8 @@ function detectDuplicateHints(rows: ParsedWaDowntimeRow[], existingRows: Array<{
           machine_normalized: machineNorm,
           start_time: row.start_time,
           end_time: row.end_time,
+          duplicate_key: internalKey,
+          match_source: row.match_source || row.match_code || 'raw:fallback',
           reason: 'Cocok dengan data downtime yang sudah ada',
         });
         continue;
@@ -328,6 +369,8 @@ function detectDuplicateHints(rows: ParsedWaDowntimeRow[], existingRows: Array<{
           machine_normalized: machineNorm,
           start_time: row.start_time,
           end_time: row.end_time,
+          duplicate_key: internalKey,
+          match_source: row.match_source || row.match_code || 'raw:fallback',
           reason: 'Mesin & tanggal cocok, reason sangat mirip dengan histori',
         });
       }
@@ -360,6 +403,7 @@ type MachineAliasScore = {
   score: number;
   code: string;
   reason: string;
+  source: MachineAliasSource;
 };
 
 function scoreMachineAlias(raw: string, aliasEntry: MachineAliasEntry): MachineAliasScore | null {
@@ -371,6 +415,7 @@ function scoreMachineAlias(raw: string, aliasEntry: MachineAliasEntry): MachineA
       score: 5000 + aliasCompact.length,
       code: 'alias:exact',
       reason: `Alias exact match via ${source}: ${alias}. ${reason}`,
+      source,
     };
   }
   if (rawCompact.includes(aliasCompact) || aliasCompact.includes(rawCompact)) {
@@ -378,6 +423,7 @@ function scoreMachineAlias(raw: string, aliasEntry: MachineAliasEntry): MachineA
       score: 3000 + aliasCompact.length,
       code: 'alias:contains',
       reason: `Alias containment match via ${source}: ${alias}. ${reason}`,
+      source,
     };
   }
   const rawTokens = new Set(normalizeMachineAliasText(raw).split(' ').filter(Boolean));
@@ -396,6 +442,7 @@ function scoreMachineAlias(raw: string, aliasEntry: MachineAliasEntry): MachineA
     score,
     code: family > 0 ? 'alias:family-bias' : overlap >= 2 ? 'alias:overlap' : 'alias:weak',
     reason: `Alias score via ${alias}: ${pieces.join('; ') || reason}.`,
+    source,
   };
 }
 
@@ -420,6 +467,7 @@ function resolveMachineLabel(rawLine: string, catalog: MachineCatalog): MachineR
         machineRaw: raw,
         machineNormalized: machineKey(family.display_laporan),
         machineMatch: 'family',
+        matchSource: 'family:borche',
         matchCode: 'family:borche',
         matchReason: `Family inference dari teks "${familyName}" ke master ${clean(family.display_laporan)}.`,
         area: clean(family.area_kerja_line),
@@ -438,6 +486,7 @@ function resolveMachineLabel(rawLine: string, catalog: MachineCatalog): MachineR
         machineRaw: raw,
         machineNormalized: machineKey(family.display_laporan),
         machineMatch: 'family',
+        matchSource: 'family:direct',
         matchCode: 'family:direct',
         matchReason: `Family inference langsung dari teks "${familyName}" ke master ${clean(family.display_laporan)}.`,
         area: clean(family.area_kerja_line),
@@ -453,6 +502,7 @@ function resolveMachineLabel(rawLine: string, catalog: MachineCatalog): MachineR
         machineRaw: raw,
         machineNormalized: machineKey(family.display_laporan),
         machineMatch: 'family',
+        matchSource: 'family:inferred',
         matchCode: 'family:inferred',
         matchReason: `Family inference dari pola teks "${inferred}" ke master ${clean(family.display_laporan)}.`,
         area: clean(family.area_kerja_line),
@@ -478,21 +528,23 @@ function resolveMachineLabel(rawLine: string, catalog: MachineCatalog): MachineR
       machineRaw: raw,
       machineNormalized: machineKey(best.display_laporan),
       machineMatch: 'alias',
+      matchSource: bestDecision?.source || 'alias_registry',
       matchCode: bestDecision?.code || 'alias:match',
       matchReason: bestDecision?.reason || `Alias registry match ke master ${clean(best.display_laporan)}.`,
       area: clean(best.area_kerja_line),
     };
   }
 
-  return {
-    machine: clean(raw),
-    machineRaw: raw,
-    machineNormalized: machineKey(raw),
-    machineMatch: 'raw',
-    matchCode: 'machine:raw-fallback',
-    matchReason: 'Tidak ada alias registry yang cocok; fallback ke teks asli.',
-    area: inferArea(raw),
-  };
+    return {
+      machine: clean(raw),
+      machineRaw: raw,
+      machineNormalized: machineKey(raw),
+      machineMatch: 'raw',
+      matchSource: 'raw:fallback',
+      matchCode: 'machine:raw-fallback',
+      matchReason: 'Tidak ada alias registry yang cocok; fallback ke teks asli.',
+      area: inferArea(raw),
+    };
 }
 
 function resolveProductionMachine(rawLine: string, section: 'PRINTING' | 'THERMOFORMING', catalog: MachineCatalog) {
@@ -503,22 +555,22 @@ function resolveProductionMachine(rawLine: string, section: 'PRINTING' | 'THERMO
     const omso = normalized.match(/\bomso\s*([12])\b|\bomso([12])\b/);
     if (omso) {
       const machine = `OMSO ${omso[1] || omso[2]}`;
-      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchCode: 'family:printing', matchReason: `Header produksi printing terdeteksi sebagai ${machine}.`, area: 'PRINTING' as const };
+      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchSource: 'family:printing', matchCode: 'family:printing', matchReason: `Header produksi printing terdeteksi sebagai ${machine}.`, area: 'PRINTING' as const };
     }
     const poly = normalized.match(/\bpoly\s*print\s*([12])\b|\bpolyprint\s*([12])\b/);
     if (poly) {
       const machine = `Polyprint ${poly[1] || poly[2]}`;
-      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchCode: 'family:printing', matchReason: `Header produksi printing terdeteksi sebagai ${machine}.`, area: 'PRINTING' as const };
+      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchSource: 'family:printing', matchCode: 'family:printing', matchReason: `Header produksi printing terdeteksi sebagai ${machine}.`, area: 'PRINTING' as const };
     }
     const cai = normalized.match(/\bcai[- ]?([12])\b/);
     if (cai) {
       const machine = `CAI ${cai[1]}`;
-      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchCode: 'family:printing', matchReason: `Header produksi printing terdeteksi sebagai ${machine}.`, area: 'PRINTING' as const };
+      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchSource: 'family:printing', matchCode: 'family:printing', matchReason: `Header produksi printing terdeteksi sebagai ${machine}.`, area: 'PRINTING' as const };
     }
     const newdo = normalized.match(/\bnewdo[- ]?([12])\b/);
     if (newdo) {
       const machine = `Newdo ${newdo[1]}`;
-      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchCode: 'family:printing', matchReason: `Header produksi printing terdeteksi sebagai ${machine}.`, area: 'PRINTING' as const };
+      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchSource: 'family:printing', matchCode: 'family:printing', matchReason: `Header produksi printing terdeteksi sebagai ${machine}.`, area: 'PRINTING' as const };
     }
   }
 
@@ -526,22 +578,22 @@ function resolveProductionMachine(rawLine: string, section: 'PRINTING' | 'THERMO
     const hf = normalized.match(/\bhf\s*0?([1-4])\b/);
     if (hf) {
       const machine = `Hengfeng ${hf[1]}`;
-      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchCode: 'family:thermoforming', matchReason: `Header produksi thermoforming terdeteksi sebagai ${machine}.`, area: 'THERMOFORMING' as const };
+      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchSource: 'family:thermoforming', matchCode: 'family:thermoforming', matchReason: `Header produksi thermoforming terdeteksi sebagai ${machine}.`, area: 'THERMOFORMING' as const };
     }
     const hengfeng = normalized.match(/\bhengfeng[- ]?([1-4])\b/);
     if (hengfeng) {
       const machine = `Hengfeng ${hengfeng[1]}`;
-      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchCode: 'family:thermoforming', matchReason: `Header produksi thermoforming terdeteksi sebagai ${machine}.`, area: 'THERMOFORMING' as const };
+      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchSource: 'family:thermoforming', matchCode: 'family:thermoforming', matchReason: `Header produksi thermoforming terdeteksi sebagai ${machine}.`, area: 'THERMOFORMING' as const };
     }
     const illig = normalized.match(/\billig[- ]?([1-3])\b/);
     if (illig) {
       const machine = `Illig ${illig[1]}`;
-      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchCode: 'family:thermoforming', matchReason: `Header produksi thermoforming terdeteksi sebagai ${machine}.`, area: 'THERMOFORMING' as const };
+      return { machine, machineRaw: raw, machineNormalized: machineKey(machine), machineMatch: 'family' as const, matchSource: 'family:thermoforming', matchCode: 'family:thermoforming', matchReason: `Header produksi thermoforming terdeteksi sebagai ${machine}.`, area: 'THERMOFORMING' as const };
     }
   }
 
   const resolved = resolveMachineLabel(raw, catalog);
-  return { machine: resolved.machine, machineRaw: raw, machineNormalized: resolved.machineNormalized, machineMatch: resolved.machineMatch, matchCode: resolved.matchCode, matchReason: resolved.matchReason, area: section };
+  return { machine: resolved.machine, machineRaw: raw, machineNormalized: resolved.machineNormalized, machineMatch: resolved.machineMatch, matchSource: resolved.matchSource, matchCode: resolved.matchCode, matchReason: resolved.matchReason, area: section };
 }
 
 function detectProductionSection(line: string): '' | 'PRINTING' | 'THERMOFORMING' {
@@ -581,6 +633,7 @@ type ProductionBlockState = {
   machineRaw: string;
   machineNormalized: string;
   machineMatch: 'family' | 'alias' | 'raw';
+  matchSource: string;
   matchCode: string;
   matchReason: string;
   product: string;
@@ -599,6 +652,7 @@ function blankProductionState(section: 'PRINTING' | 'THERMOFORMING'): Production
     machineRaw: '',
     machineNormalized: '',
     machineMatch: 'raw',
+    matchSource: 'raw:fallback',
     matchCode: 'machine:raw-fallback',
     matchReason: '',
     product: '',
@@ -636,8 +690,23 @@ function finalizeProductionBlock(block: ProductionBlockState | null): Production
     machine_raw: block.machineRaw,
     machine_normalized: block.machineNormalized,
     machine_match: block.machineMatch,
+    match_source: block.matchSource,
     match_code: block.matchCode,
     match_reason: block.matchReason,
+    idempotency_key: buildDowntimeWaIdempotencyKey({
+      event_date: block.date,
+      shift_code: block.shiftCode,
+      area: block.section,
+      machine: block.machine,
+      machine_normalized: block.machineNormalized,
+      line: block.machineRaw,
+      category: 'other',
+      start_time: '00:00',
+      end_time: '00:00',
+      root_cause: block.product || block.notes.join(' '),
+      action_taken: block.notes.join(' '),
+      condition: block.condition,
+    }),
     product: block.product,
     metric_hasil: block.metrics.hasil || '',
     metric_reject_print: block.metrics.reject_print || '',
@@ -708,6 +777,7 @@ function parseProductionReport(text: string, catalog: MachineCatalog): Productio
         machineRaw: resolved.machineRaw,
         machineNormalized: resolved.machineNormalized,
         machineMatch: resolved.machineMatch,
+        matchSource: resolved.matchSource,
         matchCode: resolved.matchCode,
         matchReason: resolved.matchReason,
         product: autoCorrectHighConfidenceTypos(clean(headerMatch[2])).text,
@@ -1055,6 +1125,7 @@ function makeRow(context: ParserContext, line: string, timing: ReturnType<typeof
     machine_raw: context.machineRaw,
     machine_normalized: context.machineNormalized,
     machine_match: context.machineMatch,
+    match_source: buildDowntimeWaMatchSource(context.machineMatch, context.machineMatchCode, context.machineMatchReason),
     line: context.machine,
     category: overrides.category || inferCategory(cause),
     start_time: start,
@@ -1070,6 +1141,20 @@ function makeRow(context: ParserContext, line: string, timing: ReturnType<typeof
     confidence: overrides.confidence || timing?.confidence || 'low',
     match_code: matchCode,
     match_reason: context.machineMatchReason || '',
+    idempotency_key: buildDowntimeWaIdempotencyKey({
+      event_date: context.eventDate,
+      shift_code: context.shiftCode,
+      area: context.area || inferArea(context.machine),
+      machine: context.machine,
+      machine_normalized: context.machineNormalized,
+      line: context.machineRaw || context.machine,
+      category: overrides.category || inferCategory(cause),
+      start_time: start,
+      end_time: end,
+      root_cause: cause,
+      action_taken: actionAuto.text,
+      condition,
+    }),
     warning: warningParts.filter(Boolean).join(' | '),
     warning_code: warningCode,
     condition,
@@ -1087,6 +1172,7 @@ function makeStateRow(context: ParserContext, state: 'lancar' | 'off' | 'standby
     machine_raw: context.machineRaw,
     machine_normalized: context.machineNormalized,
     machine_match: context.machineMatch,
+    match_source: buildDowntimeWaMatchSource(context.machineMatch, context.machineMatchCode, context.machineMatchReason),
     line: context.machine,
     category: 'other',
     start_time: shiftWindow.start,
@@ -1102,6 +1188,20 @@ function makeStateRow(context: ParserContext, state: 'lancar' | 'off' | 'standby
     confidence: 'medium',
     match_code: context.machineMatchCode || `machine:${context.machineMatch}`,
     match_reason: context.machineMatchReason || '',
+    idempotency_key: buildDowntimeWaIdempotencyKey({
+      event_date: context.eventDate,
+      shift_code: context.shiftCode,
+      area: context.area || inferArea(context.machine),
+      machine: context.machine,
+      machine_normalized: context.machineNormalized,
+      line: context.machineRaw || context.machine,
+      category: 'other',
+      start_time: shiftWindow.start,
+      end_time: shiftWindow.end,
+      root_cause: state.toUpperCase(),
+      action_taken: '',
+      condition: state,
+    }),
     warning: `State mesin ${state.toUpperCase()} terdeteksi.`,
     warning_code: `state:${state}`,
     condition: state,
@@ -1259,8 +1359,23 @@ function buildStructuredRows(rows: ParsedWaDowntimeRow[], stateRows: ParsedWaDow
     machine_raw: row.machine_raw || row.source_line,
     machine_normalized: row.machine_normalized || machineKey(row.machine),
     machine_match: row.machine_match || 'raw',
+    match_source: row.match_source || row.match_code || 'raw:fallback',
     match_code: row.match_code || '',
     match_reason: row.match_reason || '',
+    idempotency_key: row.idempotency_key || buildDowntimeWaIdempotencyKey({
+      event_date: row.event_date,
+      shift_code: row.shift_code,
+      area: row.area,
+      machine: row.machine,
+      machine_normalized: row.machine_normalized,
+      line: row.line || row.machine,
+      category: row.category,
+      start_time: row.start_time,
+      end_time: row.end_time,
+      root_cause: row.root_cause,
+      action_taken: row.action_taken,
+      condition: row.condition,
+    }),
     start: row.start_time,
     end: row.end_time,
     durasi_menit: row.duration_minutes,
@@ -1280,7 +1395,7 @@ function dedupeRows(rows: ParsedWaDowntimeRow[]) {
   const seen = new Set<string>();
   const unique: ParsedWaDowntimeRow[] = [];
   for (const row of rows) {
-    const key = [row.event_date, row.shift_code, row.area, row.machine, row.line, row.category, row.start_time, row.end_time, row.root_cause, row.action_taken].join('|');
+    const key = row.idempotency_key || [row.event_date, row.shift_code, row.area, row.machine, row.line, row.category, row.start_time, row.end_time, row.root_cause, row.action_taken].join('|');
     if (seen.has(key)) continue;
     seen.add(key);
     unique.push(row);
@@ -1821,6 +1936,13 @@ export async function POST(request: NextRequest) {
   const blocks = buildPreviewBlocks(parsed.rows);
   const structuredRows = Array.isArray(body.structuredRows) ? body.structuredRows as WaStructuredRow[] : buildStructuredRows(parsed.rows, parsed.stateRows || []);
   const productionRows = Array.isArray(body.productionRows) ? body.productionRows as ProductionSummaryRow[] : parseProductionReport(text, catalog);
+  const parserMeta = {
+    contractVersion: WA_PARSER_CONTRACT_VERSION,
+    aliasRegistrySize: catalog.aliases.length,
+    structuredRowCount: structuredRows.length,
+    productionRowCount: productionRows.length,
+    duplicateHintCount: 0,
+  };
   const duplicateHints = (() => {
     const db = getDb();
     try {
@@ -1837,12 +1959,15 @@ export async function POST(request: NextRequest) {
       db.close();
     }
   })();
+  parserMeta.duplicateHintCount = duplicateHints.length;
   if (!shouldImport) {
     return NextResponse.json({
       data: {
         mode,
         parserMode,
         aiProvider,
+        parserContractVersion: WA_PARSER_CONTRACT_VERSION,
+        parserMeta,
         processedLines: parsed.processedLines,
         parsedRows: parsed.rows.length,
         skippedRows: parsed.skipped.length,
@@ -1871,6 +1996,8 @@ export async function POST(request: NextRequest) {
       mode,
       parserMode,
       aiProvider,
+      parserContractVersion: WA_PARSER_CONTRACT_VERSION,
+      parserMeta,
       processedLines: parsed.processedLines,
       processedRows: parsed.rows.length,
       parsedRows: parsed.rows.length,
