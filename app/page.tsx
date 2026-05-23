@@ -348,6 +348,7 @@ type DowntimeWaParseResult = {
     reason: string;
     operator: string;
     note: string;
+    source_line?: string;
     condition: string;
     shift_code: string;
     area: string;
@@ -406,6 +407,7 @@ type DowntimeWaParseResult = {
     match_source: string;
     reason: string;
   }>;
+  existingRowsScanned?: number;
   parserContractVersion?: string;
   parserMeta?: {
     contractVersion: string;
@@ -478,13 +480,13 @@ const emptyDowntimeEventForm: DowntimeEventForm = {
   linked_signal_type: '',
 };
 const downtimeCategories: Array<{ value: DowntimeEventCategory; label: string }> = [
-  { value: 'setup', label: 'Setup / change over' },
-  { value: 'machine-trouble', label: 'Trouble mesin' },
+  { value: 'setup', label: 'Setup / changeover' },
+  { value: 'machine-trouble', label: 'Gangguan mesin' },
   { value: 'material', label: 'Material' },
   { value: 'mould', label: 'Mould / tooling' },
   { value: 'electrical', label: 'Listrik / utility' },
-  { value: 'qc-hold', label: 'QC hold' },
-  { value: 'waiting-order', label: 'Menunggu order' },
+  { value: 'qc-hold', label: 'Tahan QC' },
+  { value: 'waiting-order', label: 'Menunggu order produksi' },
   { value: 'cleaning', label: 'Cleaning' },
   { value: 'minor-stop', label: 'Minor stop' },
   { value: 'other', label: 'Lainnya' },
@@ -875,18 +877,36 @@ function TargetPriorityTooltip({ active, payload }: any) {
   );
 }
 
-function HoverSummaryCell({ value, title, items, emptyLabel = '-', align = 'left' }: { value: React.ReactNode; title: string; items: React.ReactNode[]; emptyLabel?: string; align?: 'left' | 'right' }) {
+function HoverSummaryCell({
+  value,
+  title,
+  items,
+  emptyLabel = '-',
+  align = 'left',
+  className = '',
+  triggerClassName = '',
+  popoverClassName = '',
+}: {
+  value: React.ReactNode;
+  title: string;
+  items: React.ReactNode[];
+  emptyLabel?: string;
+  align?: 'left' | 'right';
+  className?: string;
+  triggerClassName?: string;
+  popoverClassName?: string;
+}) {
   const [open, setOpen] = useState(false);
   const hasItems = items.length > 0;
 
   return (
     <div
-      className={`reject-cell ${open ? 'is-open' : ''} ${align === 'right' ? 'is-right' : ''}`}
+      className={`reject-cell ${className} ${open ? 'is-open' : ''} ${align === 'right' ? 'is-right' : ''}`.trim()}
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
     >
       <button
-        className={`reject-chip ${hasItems ? '' : 'is-empty'}`.trim()}
+        className={`reject-chip ${triggerClassName} ${hasItems ? '' : 'is-empty'}`.trim()}
         type="button"
         onClick={() => setOpen((value) => !value)}
         title={items.length ? String(title) : emptyLabel}
@@ -894,7 +914,7 @@ function HoverSummaryCell({ value, title, items, emptyLabel = '-', align = 'left
         {value}
       </button>
       {open && hasItems ? (
-        <div className="reject-popover">
+        <div className={`reject-popover ${popoverClassName}`.trim()}>
           <div className="reject-popover-head">{title}</div>
           <div className="reject-popover-body">
             {items.map((item, index) => (
@@ -1219,7 +1239,7 @@ export default function Home() {
   const [downtimeImporting, setDowntimeImporting] = useState(false);
   const [downtimeImportFile, setDowntimeImportFile] = useState<File | null>(null);
   const [downtimeImportDragging, setDowntimeImportDragging] = useState(false);
-  const [downtimeImportResult, setDowntimeImportResult] = useState<{ source: string; mode: string; parserMode?: string; aiProvider?: string; aiProviderUsed?: string; processedRows: number; savedRows: number; skippedRows: number; total: number; message: string } | null>(null);
+  const [downtimeImportResult, setDowntimeImportResult] = useState<{ source: string; mode: string; parserMode?: string; aiProvider?: string; aiProviderUsed?: string; processedRows: number; savedRows: number; insertedRows?: number; updatedRows?: number; existingRows?: number; existingRowsScanned?: number; skippedRows: number; total: number; message: string } | null>(null);
   const [downtimeImportError, setDowntimeImportError] = useState<string | null>(null);
   const [downtimeWaText, setDowntimeWaText] = useState('');
   const [downtimeWaViewMode, setDowntimeWaViewMode] = useState<'full' | 'output-only'>('output-only');
@@ -1247,7 +1267,7 @@ export default function Home() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const downtimePanelLabels = useMemo(() => ({
     workflow: 'Ringkasan',
-    import: 'Impor',
+    import: 'Import Backfill',
     input: 'Input Event',
     followup: 'Tindak Lanjut',
     table: 'Daftar',
@@ -1357,29 +1377,60 @@ export default function Home() {
     }
   };
 
-  const deriveDowntimeWaStructuredRow = (row: any) => ({
-    tanggal: row.event_date,
-    machine_master: row.machine,
-    machine_raw: row.machine_raw || row.source_line,
-    machine_normalized: row.machine_normalized || normalizeCode(row.machine),
-    machine_match: row.machine_match || 'raw',
-    match_source: row.match_source || row.match_code || 'raw:fallback',
-    match_code: row.match_code || '',
-    match_reason: row.match_reason || '',
-    idempotency_key: row.idempotency_key || `${row.event_date || ''}|${row.shift_code || ''}|${normalizeDowntimeWaArea(row.area || '')}|${normalizeCode(row.machine || '')}|${normalizeCode(row.line || row.machine || '')}|${normalizeCode(row.category || '')}|${row.start_time || ''}|${row.end_time || ''}|${normalizeCode(row.root_cause || '')}|${normalizeCode(row.action_taken || '')}|${normalizeCode(row.condition || '')}`,
-    start: row.start_time,
-    end: row.end_time,
-    durasi_menit: row.duration_minutes,
-    reason: row.root_cause,
-    operator: row.pic,
-    note: row.action_taken || row.warning || row.source_line,
-    condition: row.condition || (row.root_cause.toLowerCase() === 'lancar' ? 'lancar' : row.root_cause.toLowerCase() === 'off' ? 'off' : 'downtime'),
-    shift_code: row.shift_code,
-    area: row.area,
-    category: row.category,
-    confidence: row.confidence,
-    warning_code: row.warning_code || '',
-  });
+  const resolveDowntimeWaShiftWindow = (shiftCode: string) => {
+    switch (normalizeCode(shiftCode)) {
+      case '1':
+      case 'shift1':
+        return { start: '07:00', end: '15:00' };
+      case '2':
+      case 'shift2':
+        return { start: '15:00', end: '23:00' };
+      case '3':
+      case 'shift3':
+        return { start: '23:00', end: '07:00' };
+      default:
+        return { start: '07:00', end: '15:00' };
+    }
+  };
+
+  const deriveDowntimeWaDurationMinutes = (start: string, end: string) => {
+    const [startHour = 0, startMinute = 0] = start.split(':').map((part) => Number(part) || 0);
+    const [endHour = 0, endMinute = 0] = end.split(':').map((part) => Number(part) || 0);
+    let startTotal = startHour * 60 + startMinute;
+    let endTotal = endHour * 60 + endMinute;
+    if (endTotal <= startTotal) endTotal += 24 * 60;
+    return Math.max(endTotal - startTotal, 0);
+  };
+
+  const deriveDowntimeWaStructuredRow = (row: any) => {
+    const fallbackWindow = resolveDowntimeWaShiftWindow(row.shift_code);
+    const start = row.start_time || fallbackWindow.start;
+    const end = row.end_time || fallbackWindow.end;
+    const duration = row.duration_minutes || deriveDowntimeWaDurationMinutes(start, end);
+    return {
+      tanggal: row.event_date,
+      machine_master: row.machine,
+      machine_raw: row.machine_raw || row.source_line,
+      machine_normalized: row.machine_normalized || normalizeCode(row.machine),
+      machine_match: row.machine_match || 'raw',
+      match_source: row.match_source || row.match_code || 'raw:fallback',
+      match_code: row.match_code || '',
+      match_reason: row.match_reason || '',
+      idempotency_key: row.idempotency_key || `${row.event_date || ''}|${row.shift_code || ''}|${normalizeDowntimeWaArea(row.area || '')}|${normalizeCode(row.machine || '')}|${normalizeCode(row.line || row.machine || '')}|${normalizeCode(row.category || '')}|${start}|${end}|${normalizeCode(row.root_cause || '')}|${normalizeCode(row.action_taken || '')}|${normalizeCode(row.condition || '')}`,
+      start,
+      end,
+      durasi_menit: duration,
+      reason: row.root_cause,
+      operator: row.pic,
+      note: row.action_taken || row.warning || row.source_line,
+      condition: row.condition || (row.root_cause.toLowerCase() === 'lancar' ? 'lancar' : row.root_cause.toLowerCase() === 'off' ? 'off' : 'downtime'),
+      shift_code: row.shift_code,
+      area: row.area,
+      category: row.category,
+      confidence: row.confidence,
+      warning_code: row.warning_code || '',
+    };
+  };
 
   const detectLocalDowntimeDuplicates = (rows: DowntimeWaParsedRow[]) => {
     const seen = new Map<string, number>();
@@ -1404,6 +1455,23 @@ export default function Home() {
       seen.set(key, index);
       return [];
     });
+  };
+
+  const summarizeDowntimeWaConflictHints = (hints: NonNullable<DowntimeWaParseResult['duplicateHints']> = []) => {
+    const affectedRows = new Set<number>();
+    let internalCount = 0;
+    let existingCount = 0;
+    for (const hint of hints) {
+      affectedRows.add(hint.row_index);
+      if (hint.kind === 'internal') internalCount += 1;
+      if (hint.kind === 'existing') existingCount += 1;
+    }
+    return {
+      totalCount: hints.length,
+      internalCount,
+      existingCount,
+      affectedRowCount: affectedRows.size,
+    };
   };
 
   const buildDowntimeWaPreviewDiff = (baseline: DowntimeWaParsedRow[], current: DowntimeWaParsedRow[]) => {
@@ -1674,6 +1742,7 @@ export default function Home() {
 
   const downtimeWaPreviewDiff = downtimeWaResult ? buildDowntimeWaPreviewDiff(downtimeWaBaselineRows, downtimeWaResult.rows) : [];
   const downtimeWaAliasSuggestions = downtimeWaResult ? suggestDowntimeWaAliases(downtimeWaResult.rows, downtimeWaAliasOverrides, downtimeWaAliasHistory) : [];
+  const downtimeWaConflictSummary = downtimeWaResult ? summarizeDowntimeWaConflictHints(downtimeWaResult.duplicateHints) : null;
 
   const downloadParsedWaCsv = () => {
     if (!downtimeWaResult?.structuredRows?.length) return;
@@ -2867,23 +2936,23 @@ export default function Home() {
               <section className="card downtime-nav-card">
                 <div className="chart-head downtime-nav-head">
                   <div>
-                    <h2>Menu Downtime</h2>
-                    <p>Pilih workflow yang mau dibuka.</p>
+                    <h2>Gangguan Produksi</h2>
+                    <p>Pilih workflow utama untuk pantau, input, tindak lanjut, dan analisis. Import tetap dipisah supaya alurnya tidak campur.</p>
                   </div>
                   <div className="downtime-tabs">
-                    {(['workflow', 'input', 'table'] as DowntimePanel[]).map((panel) => (
+                    {(['workflow', 'input', 'table', 'followup', 'analysis'] as DowntimePanel[]).map((panel) => (
                       <button key={panel} type="button" className={`downtime-tab ${downtimePanel === panel ? 'is-active' : ''}`} onClick={() => setDowntimePanel(panel)}>
                         <span>{downtimePanelLabels[panel]}</span>
                         <em>utama</em>
                       </button>
                     ))}
                     <details className="advanced-disclosure">
-                      <summary>Lanjutan</summary>
+                      <summary>Import</summary>
                       <div className="advanced-disclosure-menu">
-                        {(['import', 'followup', 'analysis'] as DowntimePanel[]).map((panel) => (
+                        {(['import'] as DowntimePanel[]).map((panel) => (
                           <button key={panel} type="button" className={`downtime-tab ${downtimePanel === panel ? 'is-active' : ''}`} onClick={() => setDowntimePanel(panel)}>
                             <span>{downtimePanelLabels[panel]}</span>
-                            <em>lanjutan</em>
+                            <em>terpisah</em>
                           </button>
                         ))}
                       </div>
@@ -2897,7 +2966,7 @@ export default function Home() {
                 <div className="chart-head">
                   <div>
                     <h2>Gangguan Produksi · {downtimePanelLabels[downtimePanel]}</h2>
-                    <p>Mulai dari ringkasan, input kejadian, atau daftar event. Menu lanjutan tersedia jika dibutuhkan.</p>
+                    <p>Workflow utama, tindak lanjut, dan analisis saling terhubung. Import tetap dipisah supaya aman saat backfill.</p>
                   </div>
                 </div>
 
@@ -2926,7 +2995,7 @@ export default function Home() {
                   <div className="downtime-import-grid">
                     <section className="card pad soft-card">
                       <h3>Import File Downtime</h3>
-                      <p className="muted">Upload CSV/XLSX backfill. Gunakan append untuk default aman.</p>
+                      <p className="muted">Upload CSV/XLSX backfill. Gunakan append untuk default aman, lalu cocokkan dengan data downtime yang sudah ada sebelum replace.</p>
                       <div className="detail-table-toolbar-group">
                         <button className="btn secondary" type="button" onClick={() => downloadDowntimeTemplate('csv')}>Template CSV</button>
                         <button className="btn secondary" type="button" onClick={() => downloadDowntimeTemplate('xlsx')}>Template XLSX</button>
@@ -2937,13 +3006,14 @@ export default function Home() {
                         <option value="replace">Replace downtime events</option>
                       </select>
                       <button className="btn primary" type="button" onClick={uploadDowntimeBackfill} disabled={downtimeImporting || !downtimeImportFile}>{downtimeImporting ? 'Importing...' : 'Import File'}</button>
+                      <p className="muted">Data existing saat ini: {numberFmt.format(downtimeEvents.length)} event downtime. Import akan dibandingkan dengan data ini saat save.</p>
                     </section>
                     <section className="card pad soft-card">
                       <h3>Copas WA Parser</h3>
-                      <p className="muted">Preview dulu sebelum simpan. Hybrid memakai rules + AI fallback.</p>
+                      <p className="muted">Preview dulu sebelum simpan. Hybrid sekarang AI-first, rules jadi guardrail/fallback, dan hasilnya tetap bisa dicek terhadap data existing.</p>
                       <div className="detail-table-toolbar-group">
                         <select className="detail-table-select" value={downtimeWaViewMode} onChange={(event) => setDowntimeWaViewMode(event.target.value as 'full' | 'output-only')}><option value="output-only">Output Saja</option><option value="full">Full + bisa save</option></select>
-                        <select className="detail-table-select" value={downtimeWaParserMode} onChange={(event) => setDowntimeWaParserMode(event.target.value as 'rules' | 'ai' | 'hybrid')}><option value="hybrid">Hybrid</option><option value="rules">Rules</option><option value="ai">AI</option></select>
+                        <select className="detail-table-select" value={downtimeWaParserMode} onChange={(event) => setDowntimeWaParserMode(event.target.value as 'rules' | 'ai' | 'hybrid')}><option value="hybrid">Hybrid AI-first</option><option value="rules">Rules</option><option value="ai">AI</option></select>
                         <select className="detail-table-select" value={downtimeWaAiProvider} onChange={(event) => setDowntimeWaAiProvider(event.target.value as 'gemini' | 'openai')}><option value="gemini">Gemini</option><option value="openai">OpenAI</option></select>
                       </div>
                       <textarea className="downtime-wa-textarea" value={downtimeWaText} onChange={(event) => setDowntimeWaText(event.target.value)} placeholder="Paste laporan WhatsApp di sini..." rows={8} />
@@ -2953,13 +3023,14 @@ export default function Home() {
                       </div>
                     </section>
                     {(downtimeImportError || downtimeWaError) ? <div className="error-box">{downtimeImportError || downtimeWaError}</div> : null}
-                    {downtimeImportResult ? <div className="success-box">{downtimeImportResult.message} · saved {numberFmt.format(downtimeImportResult.savedRows || 0)} row</div> : null}
+                    {downtimeImportResult ? <div className="success-box">{downtimeImportResult.message} · saved {numberFmt.format(downtimeImportResult.savedRows || 0)} row{downtimeImportResult.insertedRows !== undefined || downtimeImportResult.updatedRows !== undefined || downtimeImportResult.existingRows !== undefined ? ` · new ${numberFmt.format(downtimeImportResult.insertedRows || 0)} · update ${numberFmt.format(downtimeImportResult.updatedRows || 0)} · existing ${numberFmt.format(downtimeImportResult.existingRows || 0)}` : ''}</div> : null}
                     {downtimeWaResult ? (
                       <section className="card pad soft-card downtime-preview-card">
                         <div className="chart-head">
                           <div>
                             <h3>Preview Parse WA</h3>
-                            <p className="muted">Provider: {formatAiChain(downtimeWaResult)} · contract {downtimeWaResult.parserContractVersion || downtimeWaResult.parserMeta?.contractVersion || '-'} · alias registry {numberFmt.format(downtimeWaResult.parserMeta?.aliasRegistrySize || 0)} · parsed {numberFmt.format(downtimeWaResult.rows?.length || 0)} downtime row · structured {numberFmt.format(downtimeWaResult.structuredRows?.length || 0)} row · output {numberFmt.format(downtimeWaResult.productionRows?.length || 0)} row</p>
+                            <p className="muted">Provider: {formatAiChain(downtimeWaResult)} · contract {downtimeWaResult.parserContractVersion || downtimeWaResult.parserMeta?.contractVersion || '-'} · alias registry {numberFmt.format(downtimeWaResult.parserMeta?.aliasRegistrySize || 0)} · parsed {numberFmt.format(downtimeWaResult.rows?.length || 0)} downtime row · structured {numberFmt.format(downtimeWaResult.structuredRows?.length || 0)} row · output {numberFmt.format(downtimeWaResult.productionRows?.length || 0)} row · existing scan {numberFmt.format(downtimeWaResult.existingRowsScanned || 0)} row</p>
+                            <p className="muted">AI-first dipakai untuk bersihin data, lalu raw truth tetap disimpan di `machine_raw` dan `source_line` untuk audit.</p>
                           </div>
                           <div className="detail-table-toolbar-group">
                             <button className="btn secondary table-mini-btn" type="button" onClick={downloadParsedWaCsv} disabled={!downtimeWaResult.structuredRows?.length}>Download CSV</button>
@@ -2970,7 +3041,42 @@ export default function Home() {
                         {(downtimeWaResult.notes?.length || downtimeWaResult.duplicateHints?.length || downtimeWaPreviewDiff.length) ? (
                           <div className="downtime-review-grid">
                             {downtimeWaResult.notes?.length ? <div className="warning-box"><strong>Catatan parser</strong><ul>{downtimeWaResult.notes.slice(0, 8).map((note, index) => <li key={index}>{note}</li>)}</ul></div> : null}
-                            {downtimeWaResult.duplicateHints?.length ? <div className="warning-box"><strong>Duplikat terdeteksi</strong><ul>{downtimeWaResult.duplicateHints.slice(0, 8).map((hint, index) => <li key={index}>{hint.kind} · row {hint.row_index + 1} · {hint.machine} · {hint.start_time}-{hint.end_time} · {hint.match_source}{hint.duplicate_key ? <><br/><span className="muted">{hint.duplicate_key}</span></> : null}</li>)}</ul></div> : null}
+                            {downtimeWaResult.duplicateHints?.length ? (
+                              <div className="warning-box">
+                                <strong>Conflict preview dengan data existing</strong>
+                                <div className="compare-summary-grid downtime-conflict-summary">
+                                  <div className="compare-summary-card">
+                                    <span>Total conflict</span>
+                                    <strong>{numberFmt.format(downtimeWaConflictSummary?.totalCount || 0)}</strong>
+                                    <em>{numberFmt.format(downtimeWaConflictSummary?.affectedRowCount || 0)} row terdampak</em>
+                                  </div>
+                                  <div className="compare-summary-card">
+                                    <span>Existing match</span>
+                                    <strong>{numberFmt.format(downtimeWaConflictSummary?.existingCount || 0)}</strong>
+                                    <em>Match ke data downtime yang sudah tersimpan</em>
+                                  </div>
+                                  <div className="compare-summary-card">
+                                    <span>Internal duplicate</span>
+                                    <strong>{numberFmt.format(downtimeWaConflictSummary?.internalCount || 0)}</strong>
+                                    <em>Baris ganda di hasil parse yang sama</em>
+                                  </div>
+                                </div>
+                                <div className="downtime-conflict-lists">
+                                  {downtimeWaResult.duplicateHints.filter((hint) => hint.kind === 'existing').length ? (
+                                    <div>
+                                      <span className="muted">Match existing</span>
+                                      <ul>{downtimeWaResult.duplicateHints.filter((hint) => hint.kind === 'existing').slice(0, 6).map((hint, index) => <li key={`existing-${index}`}>row {hint.row_index + 1} · {hint.machine} · {hint.start_time}-{hint.end_time} · {hint.reason}{hint.duplicate_key ? <><br/><span className="muted">{hint.duplicate_key}</span></> : null}</li>)}</ul>
+                                    </div>
+                                  ) : null}
+                                  {downtimeWaResult.duplicateHints.filter((hint) => hint.kind === 'internal').length ? (
+                                    <div>
+                                      <span className="muted">Duplikat internal</span>
+                                      <ul>{downtimeWaResult.duplicateHints.filter((hint) => hint.kind === 'internal').slice(0, 6).map((hint, index) => <li key={`internal-${index}`}>row {hint.row_index + 1} · {hint.machine} · {hint.start_time}-{hint.end_time} · {hint.reason}<br/><span className="muted">{hint.duplicate_key}</span></li>)}</ul>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ) : null}
                             {downtimeWaPreviewDiff.length ? <div className="success-box"><strong>Perubahan normalisasi</strong><ul>{downtimeWaPreviewDiff.slice(0, 8).map((item, index) => <li key={index}>Row {item.index + 1}: {item.changed.join(', ')}</li>)}</ul></div> : null}
                           </div>
                         ) : null}
@@ -2996,12 +3102,101 @@ export default function Home() {
                         </div>
 
                         {downtimeWaResult.structuredRows?.length ? (
-                          <details className="table-disclosure">
+                          <details className="table-disclosure" open>
                             <summary><span>Structured Output Preview</span><em>{numberFmt.format(downtimeWaResult.structuredRows.length)} row · buka jika perlu cek hasil teknis</em></summary>
                             <div className="detail-table-scroll downtime-wa-table-wrap">
                               <table className="detail-table downtime-wa-table">
-                                <thead><tr><th>Tanggal</th><th>Shift</th><th>Area</th><th>Machine Master</th><th>Machine Raw</th><th>Match</th><th>Match Code</th><th>Start</th><th>End</th><th className="num">Durasi</th><th>Reason</th><th>Condition</th><th>Confidence</th></tr></thead>
-                                <tbody>{downtimeWaResult.structuredRows.slice(0, 100).map((row, index) => <tr key={`${row.tanggal}-${row.machine_master}-${row.start}-${index}`}><td>{row.tanggal}</td><td>{row.shift_code}</td><td>{row.area}</td><td><strong>{row.machine_master || '-'}</strong><br/><span className="muted">{row.match_source || '-'}</span></td><td>{row.machine_raw || '-'}</td><td>{row.machine_match || '-'}</td><td>{row.match_code ? <span className="status-badge on-track">{row.match_code}</span> : '-'}</td><td>{row.start || '-'}</td><td>{row.end || '-'}</td><td className="num">{numberFmt.format(row.durasi_menit || 0)}</td><td><SmartText value={row.reason || row.category || '-'} maxChars={42} /></td><td>{row.condition || '-'}</td><td><span className={`status-badge ${row.confidence === 'high' ? 'above-target' : row.confidence === 'medium' ? 'on-track' : 'under-target'}`}>{row.confidence || '-'}</span>{row.warning_code ? <><br/><span className="muted">{row.warning_code}</span></> : null}{row.idempotency_key ? <><br/><span className="muted">{row.idempotency_key}</span></> : null}</td></tr>)}</tbody>
+                                <thead><tr><th>Tanggal</th><th>Shift</th><th>Area</th><th>Machine Master</th><th>Start</th><th>End</th><th className="num">Durasi</th><th>Reason</th><th>Action</th><th>Condition</th><th>Confidence</th></tr></thead>
+                                <tbody>{downtimeWaResult.structuredRows.slice(0, 100).map((row, index) => {
+                                  const machineMasterTitle = row.machine_master || '-';
+                                  const machineMasterItems = [
+                                    row.machine_raw ? (
+                                      <>
+                                        <div className="reject-popover-item">Machine raw</div>
+                                        <div className="reject-popover-meta">{row.machine_raw}</div>
+                                      </>
+                                    ) : null,
+                                    row.machine_normalized ? (
+                                      <>
+                                        <div className="reject-popover-item">Machine normalized</div>
+                                        <div className="reject-popover-meta">{row.machine_normalized}</div>
+                                      </>
+                                    ) : null,
+                                    row.match_code ? (
+                                      <>
+                                        <div className="reject-popover-item">Match code</div>
+                                        <div className="reject-popover-meta">{row.match_code}</div>
+                                      </>
+                                    ) : null,
+                                    row.match_source ? (
+                                      <>
+                                        <div className="reject-popover-item">Match source</div>
+                                        <div className="reject-popover-meta">{row.match_source}</div>
+                                      </>
+                                    ) : null,
+                                    row.match_reason ? (
+                                      <>
+                                        <div className="reject-popover-item">Match reason</div>
+                                        <div className="reject-popover-meta">{row.match_reason}</div>
+                                      </>
+                                    ) : null,
+                                    row.source_line ? (
+                                      <>
+                                        <div className="reject-popover-item">Raw source</div>
+                                        <div className="reject-popover-meta">{row.source_line}</div>
+                                      </>
+                                    ) : null,
+                                  ].filter(Boolean) as React.ReactNode[];
+                                  const reasonItems = [
+                                    row.category ? (
+                                      <>
+                                        <div className="reject-popover-item">Category</div>
+                                        <div className="reject-popover-meta">{row.category}</div>
+                                      </>
+                                    ) : null,
+                                    row.source_line ? (
+                                      <>
+                                        <div className="reject-popover-item">Raw source</div>
+                                        <div className="reject-popover-meta">{row.source_line}</div>
+                                      </>
+                                    ) : null,
+                                  ].filter(Boolean) as React.ReactNode[];
+                                  const actionItems = [
+                                    row.note ? (
+                                      <>
+                                        <div className="reject-popover-item">Action detail</div>
+                                        <div className="reject-popover-meta">{row.note}</div>
+                                      </>
+                                    ) : null,
+                                    row.source_line ? (
+                                      <>
+                                        <div className="reject-popover-item">Raw source</div>
+                                        <div className="reject-popover-meta">{row.source_line}</div>
+                                      </>
+                                    ) : null,
+                                  ].filter(Boolean) as React.ReactNode[];
+                                  const confidenceItems = [
+                                    row.warning_code ? (
+                                      <>
+                                        <div className="reject-popover-item">Warning code</div>
+                                        <div className="reject-popover-meta">{row.warning_code}</div>
+                                      </>
+                                    ) : null,
+                                    row.idempotency_key ? (
+                                      <>
+                                        <div className="reject-popover-item">Idempotency key</div>
+                                        <div className="reject-popover-meta">{row.idempotency_key}</div>
+                                      </>
+                                    ) : null,
+                                    row.match_code ? (
+                                      <>
+                                        <div className="reject-popover-item">Match code</div>
+                                        <div className="reject-popover-meta">{row.match_code}</div>
+                                      </>
+                                    ) : null,
+                                  ].filter(Boolean) as React.ReactNode[];
+                                  return <tr key={`${row.tanggal}-${row.machine_master}-${row.start}-${index}`}><td>{row.tanggal}</td><td>{row.shift_code}</td><td>{row.area}</td><td><HoverSummaryCell className="structured-hover-cell" triggerClassName="structured-hover-trigger" popoverClassName="structured-hover-popover" title={`Detail mesin ${machineMasterTitle}`} value={<strong>{machineMasterTitle}</strong>} items={machineMasterItems} /></td><td>{row.start || '-'}</td><td>{row.end || '-'}</td><td className="num">{numberFmt.format(row.durasi_menit || 0)}</td><td><HoverSummaryCell className="structured-hover-cell" triggerClassName="structured-hover-trigger" popoverClassName="structured-hover-popover" title={`Detail reason ${row.machine_master || '-'}`} value={<SmartText value={row.reason || row.category || '-'} maxChars={26} />} items={reasonItems} /></td><td><HoverSummaryCell className="structured-hover-cell" triggerClassName="structured-hover-trigger" popoverClassName="structured-hover-popover" title={`Detail action ${row.machine_master || '-'}`} value={<SmartText value={row.note || '-'} maxChars={20} />} items={actionItems} /></td><td>{row.condition || '-'}</td><td><HoverSummaryCell className="structured-hover-cell" triggerClassName="structured-hover-trigger" popoverClassName="structured-hover-popover" title={`Detail confidence ${row.machine_master || '-'}`} value={<span className={`status-badge ${row.confidence === 'high' ? 'above-target' : row.confidence === 'medium' ? 'on-track' : 'under-target'}`}>{row.confidence || '-'}</span>} items={confidenceItems} /></td></tr>;
+                                })}</tbody>
                               </table>
                             </div>
                           </details>
@@ -3016,17 +3211,17 @@ export default function Home() {
 
                         {downtimeWaResult.blocks?.length ? (
                           <div className="downtime-wa-blocks">
-                            <div className="downtime-wa-blocks-head"><strong>Preview blok</strong><span>{numberFmt.format(downtimeWaResult.blocks.length)} blok terdeteksi</span></div>
+                                    <div className="downtime-wa-blocks-head"><strong>Preview blok</strong><span>{numberFmt.format(downtimeWaResult.blocks.length)} blok terdeteksi</span></div>
                             <div className="downtime-wa-block-list">
                               {downtimeWaResult.blocks.map((block, index) => (
-                                <details key={`${block.label}-${index}`} className="downtime-wa-block" open={index < 3}>
+                                <details key={`${block.label}-${index}`} className="downtime-wa-block">
                                   <summary><div><strong>{block.label}</strong><span>{numberFmt.format(block.row_count)} event</span></div></summary>
                                   <div className="downtime-wa-block-body">
                                     <div className="downtime-wa-block-meta"><span>Kategori utama: {downtimeCategoryLabel(block.rows[0]?.category || 'other')}</span><span>Area: {block.area || '-'}</span><span>Shift: {block.shift_code || '-'}</span></div>
                                     <div className="detail-table-scroll downtime-wa-table-wrap">
                                       <table className="detail-table downtime-wa-table">
                                         <thead><tr><th>Waktu</th><th className="num">Durasi</th><th>Problem</th><th>Action</th><th>Confidence</th></tr></thead>
-                                        <tbody>{block.rows.map((row, rowIndex) => <tr key={`${block.label}-${rowIndex}-${row.start_time}`}><td>{row.start_time} - {row.end_time}</td><td className="num">{numberFmt.format(row.duration_minutes)} menit</td><td><SmartText value={row.root_cause || '-'} maxChars={42} /></td><td><SmartText value={row.action_taken || row.warning || '-'} maxChars={42} /></td><td><span className={`status-badge ${row.confidence === 'high' ? 'above-target' : row.confidence === 'medium' ? 'on-track' : 'under-target'}`}>{row.confidence}</span>{row.match_code ? <><br/><span className="muted">{row.match_code}</span></> : null}{row.match_source ? <><br/><span className="muted">{row.match_source}</span></> : null}{row.idempotency_key ? <><br/><span className="muted">{row.idempotency_key}</span></> : null}</td></tr>)}</tbody>
+                                        <tbody>{block.rows.map((row, rowIndex) => <tr key={`${block.label}-${rowIndex}-${row.start_time}`}><td>{row.start_time} - {row.end_time}</td><td className="num">{numberFmt.format(row.duration_minutes)} menit</td><td><SmartText value={row.root_cause || '-'} maxChars={36} /><br/><details className="inline-audit-details"><summary className="muted">raw</summary><SmartText value={row.source_line || row.machine_raw || '-'} maxChars={64} /></details></td><td><SmartText value={row.action_taken || row.warning || '-'} maxChars={28} /><br/><details className="inline-audit-details"><summary className="muted">detail</summary><div className="inline-audit-stack"><SmartText value={row.action_taken || '-'} maxChars={120} /><SmartText value={row.source_line || row.machine_raw || '-'} maxChars={80} /></div></details></td><td><span className={`status-badge ${row.confidence === 'high' ? 'above-target' : row.confidence === 'medium' ? 'on-track' : 'under-target'}`}>{row.confidence}</span>{row.match_code ? <><br/><span className="muted">{row.match_code}</span></> : null}{row.match_source ? <><br/><span className="muted">{row.match_source}</span></> : null}{row.idempotency_key ? <><br/><span className="muted">{row.idempotency_key}</span></> : null}</td></tr>)}</tbody>
                                       </table>
                                     </div>
                                   </div>
@@ -3037,8 +3232,8 @@ export default function Home() {
                         ) : null}
 
                         <details className="table-disclosure" open>
-                          <summary><span>Downtime Event Preview</span><em>{numberFmt.format((downtimeWaResult.rows || []).length)} row · cek sebelum save</em></summary>
-                          <div className="detail-table-scroll"><table className="detail-table"><thead><tr><th>#</th><th>Tanggal</th><th>Shift</th><th>Area</th><th>Mesin</th><th>Start</th><th>End</th><th className="num">Durasi</th><th>Condition</th><th>Reason</th><th>Confidence</th><th>Aksi</th></tr></thead><tbody>{(downtimeWaResult.rows || []).slice(0, 80).map((row, index) => downtimeWaEditingRowIndex === index && downtimeWaRowDraft ? <tr key={`${row.machine}-${index}`}><td>{index + 1}</td><td><input className="detail-table-input" type="date" value={downtimeWaRowDraft.event_date} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, event_date: e.target.value })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.shift_code} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, shift_code: e.target.value })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.area} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, area: e.target.value })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.machine} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, machine: e.target.value })} /></td><td><input className="detail-table-input" type="time" value={downtimeWaRowDraft.start_time} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, start_time: e.target.value })} /></td><td><input className="detail-table-input" type="time" value={downtimeWaRowDraft.end_time} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, end_time: e.target.value })} /></td><td className="num"><input className="detail-table-input" value={downtimeWaRowDraft.duration_minutes} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, duration_minutes: toNumber(e.target.value) })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.condition || ''} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, condition: e.target.value as DowntimeWaParsedRow['condition'] })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.root_cause || ''} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, root_cause: e.target.value })} /></td><td>{downtimeWaRowDraft.confidence}{downtimeWaRowDraft.warning_code ? <><br/><span className="muted">{downtimeWaRowDraft.warning_code}</span></> : null}{downtimeWaRowDraft.idempotency_key ? <><br/><span className="muted">{downtimeWaRowDraft.idempotency_key}</span></> : null}</td><td><button className="btn secondary table-mini-btn" type="button" onClick={saveEditingDowntimeWaRow}>Save</button><button className="btn secondary table-mini-btn" type="button" onClick={cancelEditingDowntimeWaRow}>Cancel</button></td></tr> : <tr key={`${row.machine}-${index}`} className={downtimeWaResult.duplicateHints?.some((hint) => hint.row_index === index) ? 'target-alert-row' : ''}><td>{index + 1}</td><td>{row.event_date}</td><td>{row.shift_code}</td><td>{row.area}</td><td><strong>{row.machine}</strong><br/><span className="muted">{deriveDowntimeWaStructuredRow(row).machine_match}</span>{row.match_code ? <><br/><span className="status-badge on-track">{row.match_code}</span></> : null}{row.match_reason ? <><br/><span className="muted">{row.match_reason}</span></> : null}{row.match_source ? <><br/><span className="muted">{row.match_source}</span></> : null}</td><td>{row.start_time}</td><td>{row.end_time}</td><td className="num">{decimalFmt.format(row.duration_minutes)}</td><td>{row.condition || '-'}</td><td>{row.root_cause || row.category}</td><td>{row.confidence}{row.warning_code ? <><br/><span className="muted">{row.warning_code}</span></> : null}{row.warning ? <><br/><span className="muted">{row.warning}</span></> : null}{row.idempotency_key ? <><br/><span className="muted">{row.idempotency_key}</span></> : null}</td><td><button className="btn secondary table-mini-btn" type="button" onClick={() => startEditingDowntimeWaRow(index)}>Edit</button><button className="btn secondary table-mini-btn" type="button" onClick={() => applyDowntimeWaRowToSimilar(index, { machine: row.machine, area: row.area })}>Apply Similar</button></td></tr>)}</tbody></table></div>
+                          <summary><span>Preview Event Gangguan</span><em>{numberFmt.format((downtimeWaResult.rows || []).length)} row · cek sebelum save</em></summary>
+                          <div className="detail-table-scroll downtime-event-scroll"><table className="detail-table"><thead><tr><th>#</th><th>Tanggal</th><th>Shift</th><th>Area</th><th>Mesin</th><th>Start</th><th>End</th><th className="num">Durasi</th><th>Condition</th><th>Reason</th><th>Confidence</th><th>Aksi</th></tr></thead><tbody>{(downtimeWaResult.rows || []).slice(0, 80).map((row, index) => downtimeWaEditingRowIndex === index && downtimeWaRowDraft ? <tr key={`${row.machine}-${index}`}><td>{index + 1}</td><td><input className="detail-table-input" type="date" value={downtimeWaRowDraft.event_date} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, event_date: e.target.value })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.shift_code} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, shift_code: e.target.value })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.area} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, area: e.target.value })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.machine} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, machine: e.target.value })} /></td><td><input className="detail-table-input" type="time" value={downtimeWaRowDraft.start_time} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, start_time: e.target.value })} /></td><td><input className="detail-table-input" type="time" value={downtimeWaRowDraft.end_time} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, end_time: e.target.value })} /></td><td className="num"><input className="detail-table-input" value={downtimeWaRowDraft.duration_minutes} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, duration_minutes: toNumber(e.target.value) })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.condition || ''} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, condition: e.target.value as DowntimeWaParsedRow['condition'] })} /></td><td><input className="detail-table-input" value={downtimeWaRowDraft.root_cause || ''} onChange={(e) => setDowntimeWaRowDraft({ ...downtimeWaRowDraft, root_cause: e.target.value })} /></td><td>{downtimeWaRowDraft.confidence}{downtimeWaRowDraft.warning_code ? <><br/><span className="muted">{downtimeWaRowDraft.warning_code}</span></> : null}{downtimeWaRowDraft.idempotency_key ? <><br/><span className="muted">{downtimeWaRowDraft.idempotency_key}</span></> : null}</td><td><button className="btn secondary table-mini-btn" type="button" onClick={saveEditingDowntimeWaRow}>Save</button><button className="btn secondary table-mini-btn" type="button" onClick={cancelEditingDowntimeWaRow}>Cancel</button></td></tr> : <tr key={`${row.machine}-${index}`} className={downtimeWaResult.duplicateHints?.some((hint) => hint.row_index === index) ? 'target-alert-row' : ''}><td>{index + 1}</td><td>{row.event_date}</td><td>{row.shift_code}</td><td>{row.area}</td><td><strong>{row.machine}</strong><br/><span className="muted">{deriveDowntimeWaStructuredRow(row).machine_match}</span>{row.match_code ? <><br/><span className="status-badge on-track">{row.match_code}</span></> : null}{row.match_reason ? <><br/><span className="muted">{row.match_reason}</span></> : null}{row.match_source ? <><br/><span className="muted">{row.match_source}</span></> : null}</td><td>{row.start_time}</td><td>{row.end_time}</td><td className="num">{decimalFmt.format(row.duration_minutes)}</td><td>{row.condition || '-'}</td><td>{row.root_cause || row.category}</td><td>{row.confidence}{row.warning_code ? <><br/><span className="muted">{row.warning_code}</span></> : null}{row.warning ? <><br/><span className="muted">{row.warning}</span></> : null}{row.idempotency_key ? <><br/><span className="muted">{row.idempotency_key}</span></> : null}</td><td><button className="btn secondary table-mini-btn" type="button" onClick={() => startEditingDowntimeWaRow(index)}>Edit</button><button className="btn secondary table-mini-btn" type="button" onClick={() => applyDowntimeWaRowToSimilar(index, { machine: row.machine, area: row.area })}>Apply Similar</button></td></tr>)}</tbody></table></div>
                         </details>
 
                       </section>
@@ -3056,8 +3251,8 @@ export default function Home() {
                     <label>End<input className="detail-table-input" type="time" value={downtimeEventForm.end_time} onChange={(e) => setDowntimeEventForm((c) => ({ ...c, end_time: e.target.value }))} /></label>
                     <label>Kategori<select className="detail-table-select" value={downtimeEventForm.category} onChange={(e) => setDowntimeEventForm((c) => ({ ...c, category: e.target.value as DowntimeEventCategory }))}>{downtimeCategories.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
                     <label>Status<select className="detail-table-select" value={downtimeEventForm.status} onChange={(e) => setDowntimeEventForm((c) => ({ ...c, status: e.target.value as DowntimeEventStatus }))}>{downtimeStatuses.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
-                    <label className="span-2">Root Cause<textarea className="detail-table-input" value={downtimeEventForm.root_cause} onChange={(e) => setDowntimeEventForm((c) => ({ ...c, root_cause: e.target.value }))} /></label>
-                    <label className="span-2">Action Taken<textarea className="detail-table-input" value={downtimeEventForm.action_taken} onChange={(e) => setDowntimeEventForm((c) => ({ ...c, action_taken: e.target.value }))} /></label>
+                    <label className="span-2">Penyebab<textarea className="detail-table-input" value={downtimeEventForm.root_cause} onChange={(e) => setDowntimeEventForm((c) => ({ ...c, root_cause: e.target.value }))} /></label>
+                    <label className="span-2">Tindakan<textarea className="detail-table-input" value={downtimeEventForm.action_taken} onChange={(e) => setDowntimeEventForm((c) => ({ ...c, action_taken: e.target.value }))} /></label>
                     <div className="span-2 detail-table-toolbar-group"><button className="btn primary" type="button" onClick={saveDowntimeEvent} disabled={savingDowntimeEvent}>{savingDowntimeEvent ? 'Saving...' : editingDowntimeEventId ? 'Update Event' : 'Save Event'}</button><button className="btn secondary" type="button" onClick={resetDowntimeEventForm}>Reset</button></div>
                   </div>
                 ) : null}
@@ -3065,7 +3260,7 @@ export default function Home() {
                 {(downtimePanel === 'followup' || downtimePanel === 'table') ? (
                   <>
                     <DataTableToolbar totalCount={downtimePanel === 'followup' ? downtimeFollowUpRows.length : downtimeEvents.length} hasActiveFilters={Boolean(downtimeEventFilters.category || downtimeEventFilters.shift || downtimeEventFilters.status)} onReset={() => setDowntimeEventFilters(emptyDowntimeEventFilters)} left={<><TableFilterSelect value={downtimeEventFilters.category} onChange={(category) => setDowntimeEventFilters((c) => ({ ...c, category: category as DowntimeEventFilters['category'] }))} options={[{ value: '', label: 'Semua kategori' }, ...downtimeCategories]} /><TableFilterSelect value={downtimeEventFilters.status} onChange={(status) => setDowntimeEventFilters((c) => ({ ...c, status: status as DowntimeEventFilters['status'] }))} options={[{ value: '', label: 'Semua status' }, ...downtimeStatuses]} /><TableFilterSelect value={downtimeEventFilters.shift} onChange={(shift) => setDowntimeEventFilters((c) => ({ ...c, shift }))} options={[{ value: '', label: 'Semua shift' }, ...downtimeShiftOptions.map((shift) => ({ value: shift, label: shift }))]} /></>} />
-                    <div className="detail-table-scroll"><table className="detail-table downtime-event-table"><thead><tr><th>Tanggal & Shift</th><th>Mesin & Area</th><th>Waktu</th><th className="num">Durasi</th><th>Kategori</th><th>Status</th><th>Root Cause / Action</th><th className="num">Loss</th><th>PIC</th><th>Aksi</th></tr></thead><tbody>{(downtimePanel === 'followup' ? downtimeFollowUpRows.map((x) => x.event) : downtimeEvents).length ? (downtimePanel === 'followup' ? downtimeFollowUpRows.map((x) => x.event) : downtimeEvents).map((row) => <tr key={row.id} className={`downtime-row-${row.status} ${!cleanText(row.root_cause, '') || !cleanText(row.action_taken, '') ? 'is-alert' : ''}`}><td><strong>{row.event_date}</strong><br/><span className="muted">Shift {row.shift_code || '-'}</span></td><td><div className="machine-product-cell"><strong>{row.machine}</strong><span>{row.area || '-'}{row.linked_signal_type ? ` · ${downtimeSignalLabel(row.linked_signal_type as DowntimeSignalType)}` : ''}</span></div></td><td>{row.start_time} - {row.end_time}</td><td className="num">{decimalFmt.format(row.duration_minutes)} menit</td><td>{row.category}</td><td><span className={`status-badge ${row.status}`}>{row.status}</span></td><td><strong>{row.root_cause || 'Root cause belum diisi'}</strong><br/><span className="muted">{row.action_taken || 'Action/follow up belum diisi'}</span></td><td className="num">{row.estimated_loss_output ? numberFmt.format(row.estimated_loss_output) : '-'}</td><td>{row.pic || '-'}</td><td><div className="table-actions"><button className="btn secondary table-mini-btn" type="button" onClick={() => editDowntimeEvent(row)}>Edit</button><button className="btn secondary table-mini-btn danger" type="button" onClick={() => deleteDowntimeEvent(row.id)}>Hapus</button></div></td></tr>) : <tr><td colSpan={10}><div className="empty guided-empty table-empty"><strong>{downtimePanel === 'followup' ? 'Belum ada follow up' : 'Belum ada event gangguan'}</strong><p>{downtimePanel === 'followup' ? 'Event yang butuh root cause/action akan muncul di sini.' : 'Klik Input Event untuk mencatat gangguan produksi pertama.'}</p></div></td></tr>}</tbody></table></div>
+                    <div className="detail-table-scroll"><table className="detail-table downtime-event-table"><thead><tr><th>Tanggal & Shift</th><th>Mesin & Area</th><th>Waktu</th><th className="num">Durasi</th><th>Kategori</th><th>Status</th><th>Penyebab / Tindakan</th><th className="num">Loss</th><th>PIC</th><th>Aksi</th></tr></thead><tbody>{(downtimePanel === 'followup' ? downtimeFollowUpRows.map((x) => x.event) : downtimeEvents).length ? (downtimePanel === 'followup' ? downtimeFollowUpRows.map((x) => x.event) : downtimeEvents).map((row) => <tr key={row.id} className={`downtime-row-${row.status} ${!cleanText(row.root_cause, '') || !cleanText(row.action_taken, '') ? 'is-alert' : ''}`}><td><strong>{row.event_date}</strong><br/><span className="muted">Shift {row.shift_code || '-'}</span></td><td><div className="machine-product-cell"><strong>{row.machine}</strong><span>{row.area || '-'}{row.linked_signal_type ? ` · ${downtimeSignalLabel(row.linked_signal_type as DowntimeSignalType)}` : ''}</span></div></td><td>{row.start_time} - {row.end_time}</td><td className="num">{decimalFmt.format(row.duration_minutes)} menit</td><td>{row.category}</td><td><span className={`status-badge ${row.status}`}>{row.status}</span></td><td><strong>{row.root_cause || 'Penyebab belum diisi'}</strong><br/><span className="muted">{row.action_taken || 'Tindakan belum diisi'}</span></td><td className="num">{row.estimated_loss_output ? numberFmt.format(row.estimated_loss_output) : '-'}</td><td>{row.pic || '-'}</td><td><div className="table-actions"><button className="btn secondary table-mini-btn" type="button" onClick={() => editDowntimeEvent(row)}>Edit</button><button className="btn secondary table-mini-btn danger" type="button" onClick={() => deleteDowntimeEvent(row.id)}>Hapus</button></div></td></tr>) : <tr><td colSpan={10}><div className="empty guided-empty table-empty"><strong>{downtimePanel === 'followup' ? 'Belum ada tindak lanjut' : 'Belum ada event gangguan'}</strong><p>{downtimePanel === 'followup' ? 'Event yang butuh penyebab/tindakan akan muncul di sini.' : 'Klik Input Event untuk mencatat gangguan produksi pertama.'}</p></div></td></tr>}</tbody></table></div>
                   </>
                 ) : null}
               </section>

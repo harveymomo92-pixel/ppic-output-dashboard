@@ -31,6 +31,7 @@ type ParsedWaDowntimeRow = {
   estimated_loss_output: number;
   linked_signal_type: string;
   source_line: string;
+  source_order?: number;
   confidence: 'high' | 'medium' | 'low';
   warning: string;
   warning_code?: string;
@@ -91,6 +92,7 @@ type WaStructuredRow = {
   reason: string;
   operator: string;
   note: string;
+  source_line: string;
   condition: string;
   shift_code: string;
   area: string;
@@ -127,6 +129,7 @@ type ProductionSummaryRow = {
   note: string;
   source_line: string;
   confidence: 'high' | 'medium' | 'low';
+  source_order?: number;
 };
 
 type ParserMode = 'rules' | 'ai' | 'hybrid';
@@ -166,6 +169,45 @@ const shiftWindows: Record<string, { start: string; end: string }> = {
   '2': { start: '15:00', end: '23:00' },
   '3': { start: '23:00', end: '07:00' },
 };
+
+function resolveShiftWindow(shiftCode: string) {
+  return shiftWindows[shiftNumber(shiftCode)] ?? shiftWindows['1'];
+}
+
+function applyShiftWindowFallback(row: ParsedWaDowntimeRow): ParsedWaDowntimeRow {
+  const shiftWindow = resolveShiftWindow(row.shift_code);
+  const startTime = clean(row.start_time) || shiftWindow.start;
+  const endTime = clean(row.end_time) || shiftWindow.end;
+  const usedFallback = startTime !== row.start_time || endTime !== row.end_time;
+  if (!usedFallback) return row;
+  const warningCode = mergeCodes(row.warning_code, 'timing:shift_window');
+  const warning = mergeCodes(
+    row.warning,
+    'Tidak ada jam/durasi eksplisit; memakai rentang shift.',
+  );
+  return {
+    ...row,
+    start_time: startTime,
+    end_time: endTime,
+    duration_minutes: row.duration_minutes || minutesBetween(row.event_date, startTime, endTime),
+    warning,
+    warning_code: warningCode,
+    idempotency_key: buildDowntimeWaIdempotencyKey({
+      event_date: row.event_date,
+      shift_code: row.shift_code,
+      area: row.area,
+      machine: row.machine,
+      machine_normalized: row.machine_normalized,
+      line: row.line || row.machine,
+      category: row.category,
+      start_time: startTime,
+      end_time: endTime,
+      root_cause: row.root_cause,
+      action_taken: row.action_taken,
+      condition: row.condition,
+    }),
+  };
+}
 
 function value(input: unknown) {
   return input === null || input === undefined ? '' : String(input);
@@ -246,6 +288,8 @@ type MachineCatalog = {
   aliases: Array<MachineAliasEntry>;
 };
 
+type MachineOrderMap = Map<string, number>;
+
 type MachineAliasSource = 'display_laporan' | 'kode_asli_sistem' | 'kode_asli_normalized' | 'deskripsi_produk' | 'area_kerja_line' | 'family_variant';
 
 type MachineAliasEntry = {
@@ -300,6 +344,15 @@ function loadMachineCatalog(): MachineCatalog {
     }
   }
   return { rows, aliases };
+}
+
+function buildMachineOrderMap(catalog: MachineCatalog): MachineOrderMap {
+  const map: MachineOrderMap = new Map();
+  catalog.rows.forEach((row, index) => {
+    const key = machineKey(row.display_laporan || row.kode_asli_sistem || row.kode_asli_normalized || row.deskripsi_produk || row.area_kerja_line);
+    if (key && !map.has(key)) map.set(key, index);
+  });
+  return map;
 }
 
 function machineKey(input: string) {
@@ -451,7 +504,30 @@ function catalogRowByLabel(catalog: MachineCatalog, label: string) {
   if (!normalized) return null;
   const resolved = catalog.aliases
     .filter((entry) => normalizeText(entry.row.display_laporan) === normalized || normalizeText(entry.alias) === normalized)
-    .sort((a, b) => (scoreMachineAlias(label, b)?.score ?? 0) - (scoreMachineAlias(label, a)?.score ?? 0))[0]?.row;
+    .sort((a, b) => {
+      const aExactDisplay = normalizeText(a.row.display_laporan) === normalized ? 1 : 0;
+      const bExactDisplay = normalizeText(b.row.display_laporan) === normalized ? 1 : 0;
+      if (aExactDisplay !== bExactDisplay) return bExactDisplay - aExactDisplay;
+
+      const aExactAlias = normalizeText(a.alias) === normalized ? 1 : 0;
+      const bExactAlias = normalizeText(b.alias) === normalized ? 1 : 0;
+      if (aExactAlias !== bExactAlias) return bExactAlias - aExactAlias;
+
+      const sourceRank = (source: MachineAliasSource) => {
+        if (source === 'display_laporan') return 5;
+        if (source === 'kode_asli_sistem' || source === 'kode_asli_normalized') return 4;
+        if (source === 'deskripsi_produk') return 3;
+        if (source === 'area_kerja_line') return 2;
+        return 1;
+      };
+      const sourceDiff = sourceRank(b.source) - sourceRank(a.source);
+      if (sourceDiff !== 0) return sourceDiff;
+
+      const scoreDiff = (scoreMachineAlias(label, b)?.score ?? 0) - (scoreMachineAlias(label, a)?.score ?? 0);
+      if (scoreDiff !== 0) return scoreDiff;
+
+      return a.alias.localeCompare(b.alias);
+    })[0]?.row;
   return resolved || null;
 }
 
@@ -909,8 +985,10 @@ function autoCorrectHighConfidenceTypos(input: string) {
 }
 
 function applyHighConfidenceTyposToRow(row: ParsedWaDowntimeRow) {
-  const root = autoCorrectHighConfidenceTypos(row.root_cause);
-  const action = autoCorrectHighConfidenceTypos(row.action_taken);
+  const rootText = normalizeReasonText(row.root_cause, row.source_line || row.line || row.machine_raw || row.machine || '');
+  const actionText = normalizeActionText(row.action_taken, row.source_line || row.line || row.machine_raw || row.machine || '');
+  const root = autoCorrectHighConfidenceTypos(rootText);
+  const action = autoCorrectHighConfidenceTypos(actionText);
   const warningParts = [clean(row.warning)];
   const warningCode = mergeCodes(
     row.warning_code,
@@ -921,8 +999,8 @@ function applyHighConfidenceTyposToRow(row: ParsedWaDowntimeRow) {
   if (action.corrections.length) warningParts.push(`Auto-correct action: ${action.corrections.slice(0, 3).map((item) => `${item.from}→${item.to}`).join(', ')}`);
   return {
     ...row,
-    root_cause: root.text || row.root_cause,
-    action_taken: action.text || row.action_taken,
+    root_cause: root.text || rootText || row.root_cause,
+    action_taken: action.text || actionText || row.action_taken,
     warning: warningParts.filter(Boolean).join(' | '),
     warning_code: warningCode,
   } as ParsedWaDowntimeRow;
@@ -1008,7 +1086,8 @@ function looksLikeMachineLine(line: string) {
   if (!text || normalized.includes(':')) return false;
   if (/^(hasil|sisa order|rijek|reject|r\.preform|r\.prifrom|prifrom|preform b|gumpalan|ct|problem|lancar)\b/i.test(normalized)) return false;
   if (/^(botol|preform loaded|reset|penambahan|mesin stop)\b/i.test(normalized)) return false;
-  if (/\b(longsun|borch|borche|v\s*-?\s*fine|cp)\b/i.test(normalized)) return true;
+  if (inferMachineFamilyLabel(text)) return true;
+  if (/\b(longsun|borch|borche|v\s*-?\s*fine|chum power|cp|hengfeng|hf|illig|tf|poly\s*print|polyprint|omso|new\s*do|newdo|cai)\b/i.test(normalized)) return true;
   return /^[A-Z0-9 .-]{2,24}$/.test(text) && !/\d+\s*(ml|gr|gram|pcs|kg|jb|polly)/i.test(text);
 }
 
@@ -1095,7 +1174,7 @@ function mergeCodes(...codes: Array<string | undefined | null>) {
   return [...new Set(codes.flatMap((code) => (code || '').split(/\s*\|\s*/).map((item) => item.trim()).filter(Boolean)))].join(' | ');
 }
 
-function makeRow(context: ParserContext, line: string, timing: ReturnType<typeof parseProblemTiming>, overrides: Partial<ParsedWaDowntimeRow> = {}): ParsedWaDowntimeRow | null {
+function makeRow(context: ParserContext, line: string, timing: ReturnType<typeof parseProblemTiming>, sourceOrder = 0, overrides: Partial<ParsedWaDowntimeRow> = {}): ParsedWaDowntimeRow | null {
   if (!context.eventDate || !context.shiftCode || !context.machine) return null;
   const shiftWindow = shiftWindows[shiftNumber(context.shiftCode)] ?? shiftWindows['1'];
   const start = overrides.start_time || timing?.start || shiftWindow.start;
@@ -1139,6 +1218,7 @@ function makeRow(context: ParserContext, line: string, timing: ReturnType<typeof
     linked_signal_type: '',
     source_line: stripWaMarkdown(line),
     confidence: overrides.confidence || timing?.confidence || 'low',
+    source_order: sourceOrder,
     match_code: matchCode,
     match_reason: context.machineMatchReason || '',
     idempotency_key: buildDowntimeWaIdempotencyKey({
@@ -1161,7 +1241,7 @@ function makeRow(context: ParserContext, line: string, timing: ReturnType<typeof
   };
 }
 
-function makeStateRow(context: ParserContext, state: 'lancar' | 'off' | 'standby' | 'setup' | 'cleaning' | 'trial' | 'running', line: string): ParsedWaDowntimeRow | null {
+function makeStateRow(context: ParserContext, state: 'lancar' | 'off' | 'standby' | 'setup' | 'cleaning' | 'trial' | 'running', line: string, sourceOrder = 0): ParsedWaDowntimeRow | null {
   if (!context.eventDate || !context.shiftCode || !context.machine) return null;
   const shiftWindow = shiftWindows[shiftNumber(context.shiftCode)] ?? shiftWindows['1'];
   return {
@@ -1186,6 +1266,7 @@ function makeStateRow(context: ParserContext, state: 'lancar' | 'off' | 'standby
     linked_signal_type: '',
     source_line: stripWaMarkdown(line),
     confidence: 'medium',
+    source_order: sourceOrder,
     match_code: context.machineMatchCode || `machine:${context.machineMatch}`,
     match_reason: context.machineMatchReason || '',
     idempotency_key: buildDowntimeWaIdempotencyKey({
@@ -1212,6 +1293,7 @@ function parseWaReport(text: string, catalog: MachineCatalog) {
   const rows: ParsedWaDowntimeRow[] = [];
   const stateRows: ParsedWaDowntimeRow[] = [];
   const skipped: Array<{ line: string; reason: string }> = [];
+  let sourceOrder = 0;
   const context: ParserContext = {
     eventDate: '',
     shiftCode: '',
@@ -1277,24 +1359,27 @@ function parseWaReport(text: string, catalog: MachineCatalog) {
       context.lastEventIndex = -1;
       const state = parseMachineState(line);
       if (state && context.eventDate && context.shiftCode) {
-        const row = makeStateRow(context, state, line);
+        const row = makeStateRow(context, state, line, sourceOrder);
         if (row) stateRows.push(row);
+        sourceOrder += 1;
       }
       continue;
     }
 
     const state = parseMachineState(line);
     if (state && context.eventDate && context.shiftCode && context.machine) {
-      const row = makeStateRow(context, state, line);
+      const row = makeStateRow(context, state, line, sourceOrder);
       if (row) stateRows.push(row);
+      sourceOrder += 1;
       continue;
     }
 
     if (!context.inProblem) continue;
     if (isNoProblem(line)) {
       if (context.machine && context.eventDate && context.shiftCode) {
-        const row = makeStateRow(context, 'lancar', line);
+        const row = makeStateRow(context, 'lancar', line, sourceOrder);
         if (row) stateRows.push(row);
+        sourceOrder += 1;
       } else {
         skipped.push({ line, reason: 'Lancar / bukan downtime' });
       }
@@ -1303,13 +1388,14 @@ function parseWaReport(text: string, catalog: MachineCatalog) {
 
     const timing = parseProblemTiming(line, context);
     if (timing || (context.lastEventIndex < 0 && isLikelyProblemStarter(line))) {
-      const row = makeRow(context, line, timing);
+      const row = makeRow(context, line, timing, sourceOrder);
       if (row) {
         rows.push(row);
         context.lastEventIndex = rows.length - 1;
       } else {
         skipped.push({ line, reason: 'Tanggal/shift/mesin belum lengkap' });
       }
+      sourceOrder += 1;
       continue;
     }
 
@@ -1324,7 +1410,7 @@ function parseWaReport(text: string, catalog: MachineCatalog) {
   return { rows, stateRows, skipped, processedLines: lines.length };
 }
 
-function buildPreviewBlocks(rows: ParsedWaDowntimeRow[]): WaPreviewBlock[] {
+function buildPreviewBlocks(rows: ParsedWaDowntimeRow[], machineOrderMap: MachineOrderMap): WaPreviewBlock[] {
   const map = new Map<string, WaPreviewBlock>();
   for (const row of rows) {
     const key = [row.event_date, row.shift_code, row.area, row.machine].join('|');
@@ -1344,16 +1430,86 @@ function buildPreviewBlocks(rows: ParsedWaDowntimeRow[]): WaPreviewBlock[] {
     block.row_count += 1;
   }
   return [...map.values()].sort((a, b) => {
-    const dateDiff = b.event_date.localeCompare(a.event_date);
+    const dateDiff = a.event_date.localeCompare(b.event_date);
     if (dateDiff !== 0) return dateDiff;
-    const shiftDiff = b.shift_code.localeCompare(a.shift_code);
+    const shiftDiff = shiftSortRank(a.shift_code) - shiftSortRank(b.shift_code);
     if (shiftDiff !== 0) return shiftDiff;
-    return a.machine.localeCompare(b.machine);
+    const machineDiff = machineSortRank(a.machine, machineOrderMap) - machineSortRank(b.machine, machineOrderMap);
+    if (machineDiff !== 0) return machineDiff;
+    return (a.rows[0]?.source_order || 0) - (b.rows[0]?.source_order || 0);
   });
 }
 
-function buildStructuredRows(rows: ParsedWaDowntimeRow[], stateRows: ParsedWaDowntimeRow[]): WaStructuredRow[] {
-  return [...rows, ...stateRows].map((row) => ({
+function isGenericDowntimeRootCause(text: string) {
+  const normalized = normalizeText(text);
+  return /^(problem|issue|gangguan|trouble|macet|mesin mati|stop|off|standby|running|trial|setup|normal|lancar|unknown|tidak jelas|belum jelas|n\/a)$/i.test(normalized);
+}
+
+function shiftSortRank(shiftCode: string) {
+  const normalized = shiftNumber(shiftCode);
+  const rank = Number(normalized);
+  return Number.isFinite(rank) && rank > 0 ? rank : 99;
+}
+
+function machineSortRank(machine: string, machineOrderMap: MachineOrderMap) {
+  const key = machineKey(machine);
+  return machineOrderMap.get(key) ?? 9999;
+}
+
+function compareDowntimeRows(a: ParsedWaDowntimeRow, b: ParsedWaDowntimeRow, machineOrderMap: MachineOrderMap) {
+  const dateDiff = a.event_date.localeCompare(b.event_date);
+  if (dateDiff !== 0) return dateDiff;
+  const shiftDiff = shiftSortRank(a.shift_code) - shiftSortRank(b.shift_code);
+  if (shiftDiff !== 0) return shiftDiff;
+  const machineDiff = machineSortRank(a.machine, machineOrderMap) - machineSortRank(b.machine, machineOrderMap);
+  if (machineDiff !== 0) return machineDiff;
+  const timeDiff = a.start_time.localeCompare(b.start_time);
+  if (timeDiff !== 0) return timeDiff;
+  return (a.source_order || 0) - (b.source_order || 0);
+}
+
+function collapseStateCompanionDowntimeRows(rows: ParsedWaDowntimeRow[], stateRows: ParsedWaDowntimeRow[]) {
+  const statefulKeys = new Set(
+    stateRows
+      .filter((row) => row.condition && row.condition !== 'downtime')
+      .map((row) => [clean(row.event_date), clean(row.shift_code), machineKey(row.machine)].join('|')),
+  );
+  if (!statefulKeys.size) return rows;
+  return rows.filter((row) => {
+    const key = [clean(row.event_date), clean(row.shift_code), machineKey(row.machine)].join('|');
+    if (!statefulKeys.has(key)) return true;
+    if (row.condition && row.condition !== 'downtime') return true;
+    if (!isGenericDowntimeRootCause(row.root_cause)) return true;
+    if (clean(row.action_taken)) return true;
+    return false;
+  });
+}
+
+function dedupeStateRowsAgainstRows(rows: ParsedWaDowntimeRow[], stateRows: ParsedWaDowntimeRow[]) {
+  const existingStateKeys = new Set(
+    rows
+      .filter((row) => row.condition && row.condition !== 'downtime')
+      .map((row) => [clean(row.event_date), clean(row.shift_code), machineKey(row.machine), clean(row.condition)].join('|')),
+  );
+  if (!existingStateKeys.size) return stateRows;
+  return stateRows.filter((row) => {
+    const key = [clean(row.event_date), clean(row.shift_code), machineKey(row.machine), clean(row.condition)].join('|');
+    return !existingStateKeys.has(key);
+  });
+}
+
+function buildStructuredRows(rows: ParsedWaDowntimeRow[], stateRows: ParsedWaDowntimeRow[], machineOrderMap: MachineOrderMap): WaStructuredRow[] {
+  return [...rows, ...stateRows].sort((a, b) => compareDowntimeRows(a, b, machineOrderMap)).map((row) => ({
+    ...(() => {
+      const fallbackWindow = resolveShiftWindow(row.shift_code);
+      const startTime = row.start_time || fallbackWindow.start;
+      const endTime = row.end_time || fallbackWindow.end;
+      return {
+        start: startTime,
+        end: endTime,
+        durasi_menit: row.duration_minutes || minutesBetween(row.event_date, startTime, endTime),
+      };
+    })(),
     tanggal: row.event_date,
     machine_master: row.machine,
     machine_raw: row.machine_raw || row.source_line,
@@ -1370,18 +1526,16 @@ function buildStructuredRows(rows: ParsedWaDowntimeRow[], stateRows: ParsedWaDow
       machine_normalized: row.machine_normalized,
       line: row.line || row.machine,
       category: row.category,
-      start_time: row.start_time,
-      end_time: row.end_time,
+      start_time: row.start_time || resolveShiftWindow(row.shift_code).start,
+      end_time: row.end_time || resolveShiftWindow(row.shift_code).end,
       root_cause: row.root_cause,
       action_taken: row.action_taken,
       condition: row.condition,
     }),
-    start: row.start_time,
-    end: row.end_time,
-    durasi_menit: row.duration_minutes,
     reason: row.root_cause,
     operator: row.pic,
     note: row.action_taken || row.warning || row.source_line,
+    source_line: row.source_line || row.machine_raw || row.machine || row.line || '',
     condition: row.condition || (row.root_cause.toLowerCase() === 'lancar' ? 'lancar' : row.root_cause.toLowerCase() === 'off' ? 'off' : 'downtime'),
     shift_code: row.shift_code,
     area: row.area,
@@ -1511,16 +1665,32 @@ function buildAiPrompt(text: string) {
     'Kamu parser laporan WhatsApp produksi/downtime pabrik.',
     'Ubah teks WA menjadi JSON strict tanpa markdown, tanpa komentar, tanpa code fence.',
     'Output schema:',
-    '{"blocks":[{"event_date":"YYYY-MM-DD","shift_code":"Shift 1|2|3","area":"","machine":"","rows":[{"event_date":"YYYY-MM-DD","shift_code":"Shift 1|2|3","area":"","machine":"","line":"","category":"setup|machine-trouble|material|mould|electrical|qc-hold|waiting-order|cleaning|minor-stop|other","start_time":"HH:MM","end_time":"HH:MM","duration_minutes":0,"status":"open|monitoring|closed","pic":"","root_cause":"","action_taken":"","estimated_loss_output":0,"linked_signal_type":"","source_line":"","confidence":"high|medium|low","warning":"","warning_code":"","match_code":"","match_reason":"","condition":"downtime|lancar|off|normal"}]}],"skipped":[{"line":"","reason":""}],"notes":["..."]}',
+    '{"blocks":[{"event_date":"YYYY-MM-DD","shift_code":"Shift 1|2|3","area":"","machine":"","rows":[{"event_date":"YYYY-MM-DD","shift_code":"Shift 1|2|3","area":"","machine":"","machine_raw":"","machine_normalized":"","machine_match":"family|alias|raw","match_source":"","match_code":"","match_reason":"","line":"","category":"setup|machine-trouble|material|mould|electrical|qc-hold|waiting-order|cleaning|minor-stop|other","start_time":"HH:MM","end_time":"HH:MM","duration_minutes":0,"status":"open|monitoring|closed","pic":"","root_cause":"","action_taken":"","estimated_loss_output":0,"linked_signal_type":"","source_line":"","confidence":"high|medium|low","warning":"","warning_code":"","condition":"downtime|lancar|off|normal|standby|setup|cleaning|trial|running"}]}],"skipped":[{"line":"","reason":""}],"notes":["..."]}',
     'Aturan:',
     '- Kelompokkan per tanggal, shift, mesin/line, dan problem yang sama.',
     '- Jangan skip baris lancar/normal/aman/off; tetap buat row kondisi mesin.',
     '- Jika ada jam/range/durasi, isi start/end/duration seakurat mungkin.',
     '- Jika tanggal nempel seperti 18Mei atau typo ringan seperti 119Mei, infer tanggal paling masuk akal dari konteks.',
     '- Jika header mesin hanya status seperti Off/CP tanpa problem, jangan buat row downtime, tapi tetap boleh buat row kondisi bila jelas.',
-    '- Usahakan machine pakai nama master/display_laporan, dan simpan teks asli di source_line atau machine kalau perlu.',
-    '- source_line harus berisi ringkasan teks asli baris pemicu.',
+    '- Usahakan machine pakai nama master/display_laporan yang sudah dinormalisasi, dan simpan teks asli di machine_raw serta source_line.',
+    '- machine_raw harus mempertahankan label asli WA apa adanya sebelum normalisasi.',
+    '- source_line harus berisi baris pemicu asli atau ringkasan paling dekat dengan teks WA.',
+    '- Normalisasi harus membersihkan typo, menyusun kategori, dan memindahkan label mesin ke master yang paling tepat dari registry.',
+    '- Semua row tetap harus menyimpan raw truth; jangan hilangkan machine_raw, source_line, atau teks asli yang penting untuk audit.',
+    '- Kalau machine belum bisa dipastikan, set machine_match = raw dan jelaskan di match_reason.',
+    '- Kalau machine sudah cocok ke master registry, gunakan machine_match family atau alias dan match_source yang menjelaskan asal mapping dengan jelas.',
     '- confidence high kalau ada jam/range jelas, medium kalau durasi jelas tapi jam kurang, low kalau inferensi lemah.',
+    '- warning_code boleh dipakai untuk menandai state, typo, ambiguity, atau fallback.',
+    '- Pilih kategori yang paling masuk akal berdasarkan root cause dan action, jangan biarkan kategori mentah jika bisa dinormalisasi.',
+    '- root_cause / REASON harus natural, spesifik, dan mudah dipahami; hindari istilah kosong seperti Trouble, Mesin Mati, Macet, Problem, Issue, Gangguan, Stop, atau istilah generik lain yang tidak menjelaskan konteks.',
+    '- reason sebaiknya menyebut komponen fisik atau titik proses yang terdampak secara jelas bila memang ada di teks sumber, misalnya sensor, conveyor, ejection, motor, heater, panel, valve, belt, jaw, feeder, chuck, atau sejenisnya.',
+    '- action_taken / ACTION harus natural, konkret, dan operasional; jelaskan tindakan yang benar-benar dilakukan serta langkah pencegahan bila ada, tanpa memaksa format tag/tagging.',
+    '- Jangan tulis action yang terlalu generik seperti "Diperbaiki oleh MTC" jika sumber memberi detail yang lebih spesifik.',
+    '- Jika sumber WA belum mencantumkan detail pencegahan atau PIC, jangan mengarang; pertahankan sebagai info yang perlu follow-up, bukan dipaksa jadi format kaku.',
+    '- Typos pada reason dan action harus diperbaiki agar maknanya lebih jelas, tetap konsisten, dan mendekati istilah operasional pabrik yang umum dipakai.',
+    '- Kalau teks mengarah ke area PRINTING atau THERMOFORMING, pertahankan area itu dengan konsisten di setiap blok dan row; jangan campur area hanya karena ada istilah mesin yang mirip.',
+    '- Untuk baris produksi, jangan ubah section/area PRINTING dan THERMOFORMING menjadi downtime kecuali memang ada problem downtime yang eksplisit.',
+    '- Jika ada header area, jadikan itu petunjuk utama untuk parsing mesin, output, dan kategori; jangan biarkan AI menebak area dari kata umum bila header sudah jelas.',
     '- Jawab dengan JSON object tunggal saja.',
     '',
     'Teks WA:',
@@ -1528,7 +1698,164 @@ function buildAiPrompt(text: string) {
   ].join('\n');
 }
 
-async function parseWithOpenAi(text: string): Promise<{ rows: ParsedWaDowntimeRow[]; skipped: Array<{ line: string; reason: string }>; notes: string[]; model: string; }> {
+function normalizeReasonText(input: string, sourceLine: string) {
+  const raw = clean(input);
+  const source = clean(sourceLine);
+  const corrected = autoCorrectHighConfidenceTypos(raw);
+  const normalized = clean(corrected.text || raw || source);
+  if (!normalized) return source;
+  const stripped = normalized
+    .replace(/^(?:problem|issue|gangguan|trouble|macet|mesin mati|stop|off|standby|running|trial|setup)\s*[:\-–]?\s*/i, '')
+    .replace(/^(?:root cause|reason|penyebab)\s*[:\-–]?\s*/i, '');
+  const sourceStripped = clean(source)
+    .replace(/\b(problem|issue|gangguan|trouble|macet|mesin mati|stop|off|standby|running|trial|setup)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!stripped) return sourceStripped || source || normalized;
+  if (!sourceStripped) return stripped;
+  const strippedScore = stripped.replace(/[^A-Za-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean).length;
+  const sourceScore = sourceStripped.replace(/[^A-Za-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean).length;
+  const genericRe = /^(?:problem|issue|gangguan|trouble|macet|mesin mati|stop|off|standby|running|trial|setup|normal|lancar|off|unknown|tidak jelas|belum jelas)$/i;
+  if (genericRe.test(stripped) && sourceScore > strippedScore) return sourceStripped;
+  if (strippedScore <= 2 && sourceScore > strippedScore) return sourceStripped;
+  return stripped;
+}
+
+function normalizeActionText(input: string, sourceLine: string) {
+  const raw = clean(input);
+  const source = clean(sourceLine);
+  const corrected = autoCorrectHighConfidenceTypos(raw);
+  const base = clean(corrected.text || raw || source);
+  if (!base) return '';
+  const parts = base
+    .split(/\s*(?:\||\n|;|•)\s*/)
+    .map((part) => clean(part))
+    .filter(Boolean);
+  const normalizedParts = parts.map((part) => part.replace(/^(?:action|tindakan|solusi)\s*[:\-–]?\s*/i, '').trim()).filter(Boolean);
+  const joined = normalizedParts.length ? normalizedParts.join('. ') : base;
+  const sourceJoined = source
+    .replace(/^(?:action|tindakan|solusi)\s*[:\-–]?\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!joined) return sourceJoined;
+  if (!sourceJoined) return joined;
+  const joinedScore = joined.replace(/[^A-Za-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean).length;
+  const sourceScore = sourceJoined.replace(/[^A-Za-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean).length;
+  if (joinedScore <= 2 && sourceScore > joinedScore) return sourceJoined;
+  return joined;
+}
+
+function normalizeAiParsedRow(row: ParsedWaDowntimeRow, catalog: MachineCatalog): ParsedWaDowntimeRow {
+  const sourceLine = clean(row.source_line || row.machine_raw || row.line || row.machine || '');
+  const machineRaw = clean(row.machine_raw || row.line || row.machine || sourceLine);
+  const aiMachine = clean(row.machine || '');
+  const candidate = aiMachine || machineRaw || sourceLine;
+  const exactCatalog = aiMachine ? catalogRowByLabel(catalog, aiMachine) : null;
+  const resolved = exactCatalog
+    ? {
+        machine: clean(exactCatalog.display_laporan),
+        machineRaw: machineRaw || aiMachine,
+        machineNormalized: machineKey(exactCatalog.display_laporan),
+        machineMatch: 'alias' as const,
+        matchSource: 'ai:catalog-exact',
+        matchCode: 'ai:catalog-exact',
+        matchReason: `AI sudah mengembalikan master canonical ${clean(exactCatalog.display_laporan)}.`,
+        area: clean(exactCatalog.area_kerja_line),
+      }
+    : candidate
+      ? resolveMachineLabel(candidate, catalog)
+      : null;
+  const machine = clean(exactCatalog?.display_laporan || resolved?.machine || aiMachine || machineRaw || sourceLine);
+  const normalizedMachine = clean(row.machine_normalized || machineKey(machine));
+  const inferredState = inferConditionFromText(sourceLine || row.root_cause || row.action_taken || machineRaw);
+  const fallbackCondition = clean(row.condition || inferredState || '');
+  type AiCondition = NonNullable<ParsedWaDowntimeRow['condition']>;
+  const allowedConditions = new Set<AiCondition>(['downtime', 'lancar', 'off', 'normal', 'standby', 'setup', 'cleaning', 'trial', 'running', 'changeover', 'unknown']);
+  const condition: AiCondition = allowedConditions.has(fallbackCondition as AiCondition)
+    ? fallbackCondition as AiCondition
+    : 'unknown';
+  const normalizedCategory = clean(row.category || inferCategory(row.root_cause || sourceLine || row.action_taken || machineRaw)) || 'other';
+  const matchSource = exactCatalog ? 'ai:catalog-exact' : clean(resolved?.matchSource || 'ai:parsed');
+  const matchCode = exactCatalog ? 'ai:catalog-exact' : clean(resolved?.matchCode || 'ai:parsed');
+  const matchReason = exactCatalog
+    ? `AI mengembalikan master canonical ${machine}.`
+    : clean(resolved?.matchReason || 'AI parser output.');
+  const machineMatch = row.machine_match || resolved?.machineMatch || 'raw';
+  const line = clean(row.line || machineRaw || machine);
+  const warningCodeCandidate = clean(row.warning_code || '');
+  const stateWarningCode = condition && condition !== 'downtime' ? `state:${condition}` : '';
+  const warningCode = stateWarningCode && (!warningCodeCandidate || /^ai:/i.test(warningCodeCandidate))
+    ? stateWarningCode
+    : warningCodeCandidate || (stateWarningCode || 'ai:parsed');
+  const warning = clean(row.warning || (stateWarningCode ? `State mesin ${condition.toUpperCase()} terdeteksi.` : ''));
+
+  return applyHighConfidenceTyposToRow({
+    ...row,
+    event_date: clean(row.event_date),
+    shift_code: clean(row.shift_code),
+    area: clean(row.area || resolved?.area || ''),
+    machine,
+    machine_raw: machineRaw || machine,
+    machine_normalized: normalizedMachine,
+    machine_match: machineMatch,
+    match_source: matchSource,
+    match_code: matchCode,
+    match_reason: matchReason,
+    line,
+    category: normalizedCategory,
+    source_line: sourceLine || line,
+    condition,
+    root_cause: clean(row.root_cause),
+    action_taken: clean(row.action_taken),
+    warning,
+    warning_code: warningCode,
+  });
+}
+
+function normalizeAiParsedRows(rows: ParsedWaDowntimeRow[], catalog: MachineCatalog) {
+  return rows.map((row) => normalizeAiParsedRow(row, catalog));
+}
+
+function collapseAiStateCompanions(rows: ParsedWaDowntimeRow[]) {
+  const statefulKeys = new Set(
+    rows
+      .filter((row) => row.condition && row.condition !== 'downtime')
+      .map((row) => [clean(row.event_date), clean(row.shift_code), machineKey(row.machine)].join('|')),
+  );
+  if (!statefulKeys.size) return rows;
+  return rows.filter((row) => {
+    const key = [clean(row.event_date), clean(row.shift_code), machineKey(row.machine)].join('|');
+    if (!statefulKeys.has(key)) return true;
+    if (row.condition && row.condition !== 'downtime') return true;
+    if (row.start_time && row.end_time && !(row.start_time === '00:00' && row.end_time === '00:00')) return true;
+    const rootCause = normalizeText(row.root_cause);
+    const action = normalizeText(row.action_taken);
+    if (
+      /^(problem|issue|gangguan|trouble|error|stop|setup|off|standby|running|trial|cleaning|general|unknown|unspecified|normal operation|normal|n\/a)$/i.test(rootCause)
+      || /unsp?ecified|normal operation|belum spesifik|belum jelas|tidak spesifik|general/i.test(rootCause)
+      || /AMBIGUOUS_CAUSE/i.test(row.warning_code || '')
+      || /problem|lancar|normal operation/i.test(normalizeText(row.source_line || ''))
+    ) {
+      return false;
+    }
+    if (!rootCause && !action) return false;
+    return true;
+  });
+}
+
+function shouldUseRulesFallbackFromAi(parsed: { rows: ParsedWaDowntimeRow[]; skipped: Array<{ line: string; reason: string }> }) {
+  if (!parsed.rows.length) return true;
+  const rawFallbackCount = parsed.rows.filter((row) => row.machine_match === 'raw' || /raw/.test(row.match_code || '') || /raw/.test(row.match_source || '')).length;
+  const lowConfidenceCount = parsed.rows.filter((row) => row.confidence !== 'high').length;
+  const missingTimeCount = parsed.rows.filter((row) => !row.start_time || !row.end_time).length;
+  if (rawFallbackCount > 0) return true;
+  if (missingTimeCount > 0) return true;
+  if (lowConfidenceCount > parsed.rows.length / 2) return true;
+  if (parsed.skipped.length > parsed.rows.length) return true;
+  return false;
+}
+
+async function parseWithOpenAi(text: string, catalog: MachineCatalog): Promise<{ rows: ParsedWaDowntimeRow[]; skipped: Array<{ line: string; reason: string }>; notes: string[]; model: string; }> {
   const runtimeEnv = loadAppSettings();
   const apiKey = runtimeEnv.OPENAI_API_KEY || process.env.WA_PARSER_AI_API_KEY || '';
   const model = runtimeEnv.WA_PARSER_AI_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
@@ -1560,24 +1887,30 @@ async function parseWithOpenAi(text: string): Promise<{ rows: ParsedWaDowntimeRo
     const jsonText = extractJsonObject(content);
     if (!jsonText) throw new Error('OpenAI tidak mengembalikan JSON valid');
     const parsed = JSON.parse(jsonText) as AiParseResult;
-    const rows = (parsed.blocks || []).flatMap((block) => (block.rows || []).map((row) => ({
+    const rows = collapseAiStateCompanions(normalizeAiParsedRows((parsed.blocks || []).flatMap((block) => (block.rows || []).map((row, index) => ({
       ...row,
       event_date: row.event_date || block.event_date,
       shift_code: row.shift_code || block.shift_code,
       area: row.area || block.area || '',
       machine: row.machine || block.machine || '',
+      machine_raw: row.machine_raw || row.machine || row.line || block.machine || '',
+      machine_normalized: row.machine_normalized || '',
+      machine_match: row.machine_match || 'raw',
+      match_source: row.match_source || 'ai:parsed',
       line: row.line || row.machine || block.machine || '',
       match_code: row.match_code || 'ai:parsed',
       match_reason: row.match_reason || 'AI parser output.',
       warning_code: row.warning_code || 'ai:parsed',
-    }))).map(applyHighConfidenceTyposToRow);
+      source_line: row.source_line || row.line || row.machine || block.machine || '',
+      source_order: typeof row.source_order === 'number' ? row.source_order : index,
+    }))), catalog));
     return { rows, skipped: parsed.skipped || [], notes: parsed.notes || [], model };
   } finally {
     clearTimeout(timeout);
   }
 }
 
-async function parseWithGemini(text: string): Promise<{ rows: ParsedWaDowntimeRow[]; skipped: Array<{ line: string; reason: string }>; notes: string[]; model: string; }> {
+async function parseWithGemini(text: string, catalog: MachineCatalog): Promise<{ rows: ParsedWaDowntimeRow[]; skipped: Array<{ line: string; reason: string }>; notes: string[]; model: string; }> {
   const runtimeEnv = loadAppSettings();
   const apiKey = runtimeEnv.GEMINI_API_KEY || '';
   const model = runtimeEnv.GEMINI_MODEL || 'gemini-2.5-flash';
@@ -1608,33 +1941,39 @@ async function parseWithGemini(text: string): Promise<{ rows: ParsedWaDowntimeRo
     })();
     if (!jsonText) throw new Error('Gemini tidak mengembalikan JSON valid');
     const parsed = JSON.parse(jsonText) as AiParseResult;
-    const rows = (parsed.blocks || []).flatMap((block) => (block.rows || []).map((row) => ({
+    const rows = collapseAiStateCompanions(normalizeAiParsedRows((parsed.blocks || []).flatMap((block) => (block.rows || []).map((row, index) => ({
       ...row,
       event_date: row.event_date || block.event_date,
       shift_code: row.shift_code || block.shift_code,
       area: row.area || block.area || '',
       machine: row.machine || block.machine || '',
+      machine_raw: row.machine_raw || row.machine || row.line || block.machine || '',
+      machine_normalized: row.machine_normalized || '',
+      machine_match: row.machine_match || 'raw',
+      match_source: row.match_source || 'ai:parsed',
       line: row.line || row.machine || block.machine || '',
       match_code: row.match_code || 'ai:parsed',
       match_reason: row.match_reason || 'AI parser output.',
       warning_code: row.warning_code || 'ai:parsed',
-    }))).map(applyHighConfidenceTyposToRow);
+      source_line: row.source_line || row.line || row.machine || block.machine || '',
+      source_order: typeof row.source_order === 'number' ? row.source_order : index,
+    }))), catalog));
     return { rows, skipped: parsed.skipped || [], notes: parsed.notes || [], model };
   } finally {
     clearTimeout(timeout);
   }
 }
 
-async function parseWithAiFallback(text: string, primary: AiProvider) {
+async function parseWithAiFallback(text: string, primary: AiProvider, catalog: MachineCatalog) {
   const chain: AiProvider[] = primary === 'gemini' ? ['gemini', 'openai'] : ['openai', 'gemini'];
   const notes: string[] = [];
   for (const provider of chain) {
     try {
       if (provider === 'gemini') {
-        const result = await parseWithGemini(text);
+        const result = await parseWithGemini(text, catalog);
         return { ...result, provider, notes: [...notes, ...result.notes] };
       }
-      const result = await parseWithOpenAi(text);
+      const result = await parseWithOpenAi(text, catalog);
       return { ...result, provider, notes: [...notes, ...result.notes] };
     } catch (error) {
       notes.push(`${provider.toUpperCase()} gagal: ${error instanceof Error ? error.message : 'unknown error'}`);
@@ -1643,58 +1982,15 @@ async function parseWithAiFallback(text: string, primary: AiProvider) {
   throw new Error(notes.join(' | ') || 'AI parser gagal');
 }
 
-async function parseWaReportWithAi(text: string, primary: AiProvider): Promise<{ rows: ParsedWaDowntimeRow[]; skipped: Array<{ line: string; reason: string }>; notes: string[]; aiModel: string; aiUsed: boolean; aiProvider: string; }> {
-  const result = await parseWithAiFallback(text, primary);
+async function parseWaReportWithAi(text: string, primary: AiProvider, catalog: MachineCatalog): Promise<{ rows: ParsedWaDowntimeRow[]; skipped: Array<{ line: string; reason: string }>; notes: string[]; aiModel: string; aiUsed: boolean; aiProvider: string; }> {
+  const result = await parseWithAiFallback(text, primary, catalog);
   return { rows: result.rows, skipped: result.skipped, notes: result.notes, aiModel: result.model, aiUsed: true, aiProvider: result.provider };
 }
 
 
 async function parseWaReportHybrid(text: string, parserMode: ParserMode, primaryProvider: AiProvider, catalog: MachineCatalog) {
-  const rulesParsed = parseWaReport(text, catalog);
   if (parserMode === 'rules') {
-    return {
-      ...rulesParsed,
-      rows: dedupeRows(rulesParsed.rows),
-      stateRows: dedupeRows(rulesParsed.stateRows),
-      notes: [] as string[],
-      aiUsed: false,
-      aiModel: '',
-      aiProvider: '',
-      parserMode,
-    };
-  }
-
-  if (parserMode === 'ai') {
-    try {
-      const aiParsed = await parseWaReportWithAi(text, primaryProvider);
-      return {
-        rows: dedupeRows(aiParsed.rows),
-        stateRows: [],
-        skipped: aiParsed.skipped,
-        processedLines: text.split(/\r?\n/).filter((line) => stripWaMarkdown(line)).length,
-        notes: aiParsed.notes,
-        aiUsed: aiParsed.aiUsed,
-        aiModel: aiParsed.aiModel,
-        aiProvider: aiParsed.aiProvider,
-        parserMode,
-      };
-    } catch (error) {
-      return {
-        ...rulesParsed,
-        rows: dedupeRows(rulesParsed.rows),
-        stateRows: dedupeRows(rulesParsed.stateRows),
-        skipped: rulesParsed.skipped,
-        processedLines: rulesParsed.processedLines,
-        notes: [error instanceof Error ? error.message : 'AI parser gagal, fallback ke rules.'],
-        aiUsed: false,
-        aiModel: '',
-        aiProvider: '',
-        parserMode,
-      };
-    }
-  }
-
-  if (!shouldUseAiFallback(rulesParsed)) {
+    const rulesParsed = parseWaReport(text, catalog);
     return {
       ...rulesParsed,
       rows: dedupeRows(rulesParsed.rows),
@@ -1708,14 +2004,30 @@ async function parseWaReportHybrid(text: string, parserMode: ParserMode, primary
   }
 
   try {
-    const aiParsed = await parseWaReportWithAi(text, primaryProvider);
-    const mergedRows = dedupeRows([...rulesParsed.rows, ...aiParsed.rows]);
-    const notes = [...new Set([...(aiParsed.notes || []), `Hybrid: AI dipakai untuk blok ambigu (${rulesParsed.rows.length} row rules).`])];
+    const aiParsed = await parseWaReportWithAi(text, primaryProvider, catalog);
+    const aiShouldFallback = parserMode === 'hybrid' && shouldUseRulesFallbackFromAi(aiParsed);
+
+    if (parserMode === 'ai' || !aiShouldFallback) {
+      return {
+        rows: dedupeRows(aiParsed.rows),
+        stateRows: [],
+        skipped: aiParsed.skipped,
+        processedLines: text.split(/\r?\n/).filter((line) => stripWaMarkdown(line)).length,
+        notes: aiParsed.notes,
+        aiUsed: aiParsed.aiUsed,
+        aiModel: aiParsed.aiModel,
+        aiProvider: aiParsed.aiProvider,
+        parserMode,
+      };
+    }
+    const rulesParsed = parseWaReport(text, catalog);
+    const mergedRows = dedupeRows([...aiParsed.rows, ...rulesParsed.rows]);
+    const notes = [...new Set([...(aiParsed.notes || []), ...(rulesParsed.rows.length ? [`Hybrid: rules dipakai sebagai fallback setelah AI mendeteksi ${aiParsed.rows.filter((row) => row.machine_match === 'raw').length} raw row.`] : []), `Hybrid: AI dipakai sebagai parser utama.`])];
     return {
       rows: mergedRows,
       stateRows: dedupeRows(rulesParsed.stateRows),
-      skipped: [...rulesParsed.skipped, ...aiParsed.skipped],
-      processedLines: rulesParsed.processedLines,
+      skipped: [...aiParsed.skipped, ...rulesParsed.skipped],
+      processedLines: rulesParsed.processedLines || text.split(/\r?\n/).filter((line) => stripWaMarkdown(line)).length,
       notes,
       aiUsed: true,
       aiModel: aiParsed.aiModel,
@@ -1723,13 +2035,14 @@ async function parseWaReportHybrid(text: string, parserMode: ParserMode, primary
       parserMode,
     };
   } catch (error) {
+    const rulesParsed = parseWaReport(text, catalog);
     return {
       ...rulesParsed,
       rows: dedupeRows(rulesParsed.rows),
       stateRows: dedupeRows(rulesParsed.stateRows),
       skipped: rulesParsed.skipped,
       processedLines: rulesParsed.processedLines,
-      notes: [error instanceof Error ? error.message : 'AI parser gagal, hybrid fallback ke rules.'],
+      notes: [error instanceof Error ? error.message : 'AI parser gagal, fallback ke rules.'],
       aiUsed: false,
       aiModel: '',
       aiProvider: '',
@@ -1905,7 +2218,7 @@ function insertRows(rows: ParsedWaDowntimeRow[], mode: string) {
       }
       db.exec('COMMIT');
       const total = db.prepare('SELECT COUNT(*) AS count FROM downtime_events').get() as { count: number };
-      return { savedRows, insertedRows, updatedRows, existingRows, skippedRows, total: total.count };
+      return { savedRows, insertedRows, updatedRows, existingRows, skippedRows, total: total.count, existingRowsScanned: existingRowsForDates.length };
     } catch (error) {
       db.exec('ROLLBACK');
       throw error;
@@ -1920,9 +2233,10 @@ export async function POST(request: NextRequest) {
   const text = value(body.text);
   const shouldImport = Boolean(body.import);
   const mode = value(body.mode || 'append').toLowerCase();
-  const parserMode = value(body.parserMode || 'rules').toLowerCase() as ParserMode;
+  const parserMode = value(body.parserMode || 'hybrid').toLowerCase() as ParserMode;
   const aiProvider = value(body.aiProvider || 'gemini').toLowerCase() as AiProvider;
   const catalog = loadMachineCatalog();
+  const machineOrderMap = buildMachineOrderMap(catalog);
   const providedRows = Array.isArray(body.rows) ? body.rows as ParsedWaDowntimeRow[] : null;
 
   if (!text.trim() && !providedRows?.length) return NextResponse.json({ error: 'Teks laporan WA atau hasil parse wajib diisi.' }, { status: 400 });
@@ -1933,8 +2247,12 @@ export async function POST(request: NextRequest) {
   const parsed = providedRows
     ? { rows: providedRows, stateRows: [] as ParsedWaDowntimeRow[], skipped: [] as Array<{ line: string; reason: string }>, processedLines: Number(body.processedLines || 0), notes: Array.isArray(body.notes) ? body.notes as string[] : [], aiUsed: Boolean(body.aiUsed), aiModel: value(body.aiModel), aiProvider: value(body.aiProviderUsed || body.aiProvider) }
     : await parseWaReportHybrid(text, parserMode, aiProvider, catalog);
-  const blocks = buildPreviewBlocks(parsed.rows);
-  const structuredRows = Array.isArray(body.structuredRows) ? body.structuredRows as WaStructuredRow[] : buildStructuredRows(parsed.rows, parsed.stateRows || []);
+  const sortedRows = [...parsed.rows].map(applyShiftWindowFallback).sort((a, b) => compareDowntimeRows(a, b, machineOrderMap));
+  const sortedStateRows = [...(parsed.stateRows || [])].map(applyShiftWindowFallback).sort((a, b) => compareDowntimeRows(a, b, machineOrderMap));
+  const collapsedRows = collapseStateCompanionDowntimeRows(sortedRows, sortedStateRows);
+  const dedupedStateRows = dedupeStateRowsAgainstRows(collapsedRows, sortedStateRows);
+  const blocks = buildPreviewBlocks(collapsedRows, machineOrderMap);
+  const structuredRows = Array.isArray(body.structuredRows) ? body.structuredRows as WaStructuredRow[] : buildStructuredRows(collapsedRows, dedupedStateRows, machineOrderMap);
   const productionRows = Array.isArray(body.productionRows) ? body.productionRows as ProductionSummaryRow[] : parseProductionReport(text, catalog);
   const parserMeta = {
     contractVersion: WA_PARSER_CONTRACT_VERSION,
@@ -1946,7 +2264,7 @@ export async function POST(request: NextRequest) {
   const duplicateHints = (() => {
     const db = getDb();
     try {
-      const dates = [...new Set(parsed.rows.map((row) => row.event_date).filter(Boolean))];
+      const dates = [...new Set(sortedRows.map((row) => row.event_date).filter(Boolean))];
       const existingRows = dates.length
         ? db.prepare(
           `SELECT event_date, shift_code, area, machine, line, start_time, end_time, root_cause
@@ -1954,7 +2272,22 @@ export async function POST(request: NextRequest) {
            WHERE event_date IN (${dates.map(() => '?').join(',')})`
         ).all(...dates) as Array<{ event_date: string; shift_code: string; area: string; machine: string; line: string; start_time: string; end_time: string; root_cause: string }>
         : [];
-      return detectDuplicateHints(parsed.rows, existingRows);
+      return detectDuplicateHints(sortedRows, existingRows);
+    } finally {
+      db.close();
+    }
+  })();
+  const existingRowsScanned = (() => {
+    const db = getDb();
+    try {
+      const dates = [...new Set(sortedRows.map((row) => row.event_date).filter(Boolean))];
+      if (!dates.length) return 0;
+      const row = db.prepare(
+        `SELECT COUNT(*) AS count
+         FROM downtime_events
+         WHERE event_date IN (${dates.map(() => '?').join(',')})`
+      ).get(...dates) as { count: number } | undefined;
+      return Number(row?.count || 0);
     } finally {
       db.close();
     }
@@ -1969,9 +2302,10 @@ export async function POST(request: NextRequest) {
         parserContractVersion: WA_PARSER_CONTRACT_VERSION,
         parserMeta,
         processedLines: parsed.processedLines,
-        parsedRows: parsed.rows.length,
+        parsedRows: sortedRows.length,
         skippedRows: parsed.skipped.length,
-        rows: parsed.rows,
+        existingRowsScanned,
+        rows: sortedRows,
         structuredRows,
         productionRows,
         blocks,
@@ -1981,12 +2315,12 @@ export async function POST(request: NextRequest) {
         aiModel: parsed.aiModel,
         aiProviderUsed: parsed.aiProvider,
         notes: parsed.notes,
-        message: `Preview parser WA: ${parsed.rows.length} event terdeteksi, ${parsed.skipped.length} line di-skip`,
+        message: `Preview parser WA: ${sortedRows.length} event terdeteksi, ${parsed.skipped.length} line di-skip`,
       },
     });
   }
 
-  const result = insertRows(parsed.rows, mode);
+  const result = insertRows(sortedRows, mode);
   const message = result.insertedRows > 0
     ? `Import Copas WA ok (${result.insertedRows} baris baru, ${result.updatedRows} update, ${result.skippedRows + parsed.skipped.length} skip)`
     : `Import Copas WA: data sudah ada (${result.existingRows} baris match), tidak ada baris baru masuk`;
@@ -1999,15 +2333,16 @@ export async function POST(request: NextRequest) {
       parserContractVersion: WA_PARSER_CONTRACT_VERSION,
       parserMeta,
       processedLines: parsed.processedLines,
-      processedRows: parsed.rows.length,
-      parsedRows: parsed.rows.length,
+      processedRows: sortedRows.length,
+      parsedRows: sortedRows.length,
       savedRows: result.savedRows,
       insertedRows: result.insertedRows,
       updatedRows: result.updatedRows,
       existingRows: result.existingRows,
+      existingRowsScanned: result.existingRowsScanned,
       skippedRows: result.skippedRows + parsed.skipped.length,
       total: result.total,
-      rows: parsed.rows,
+      rows: sortedRows,
       structuredRows,
       productionRows,
       blocks,

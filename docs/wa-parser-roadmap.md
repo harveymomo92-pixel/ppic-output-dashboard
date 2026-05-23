@@ -10,6 +10,7 @@ Dokumen ini merangkum arah peningkatan untuk parser WA downtime dan layer normal
 4. Import tetap idempotent dan aman di-run ulang.
 5. Ada jejak alasan kenapa baris dipetakan ke machine tertentu.
 6. Fixture regresi mudah dibaca dan bisa dipakai ulang saat parser berubah.
+7. Jalur parser utama bergerak ke AI-first, tapi `machine_raw` dan `source_line` tetap disimpan sebagai truth untuk audit.
 
 ## Prinsip kerja
 
@@ -18,6 +19,7 @@ Dokumen ini merangkum arah peningkatan untuk parser WA downtime dan layer normal
 3. Rules yang pasti menang dulu, AI hanya untuk kasus ambigu.
 4. Setiap perubahan normalisasi harus bisa dilacak ke fixture atau contoh WA.
 5. Jangan naikkan kompleksitas parser sebelum ada regresi test.
+6. AI boleh jadi parser utama, asal raw truth tetap tersimpan dan rules masih jadi guardrail.
 
 ## Kondisi saat ini
 
@@ -109,13 +111,29 @@ Selesai kalau:
 
 Fokus:
 
-1. AI hanya dipakai untuk blok ambigu yang memang perlu bantuan.
-2. Fallback provider tetap rules-first.
-3. Prompt AI disesuaikan agar schema output tetap ketat dan konsisten.
+1. AI jadi parser utama untuk mayoritas blok.
+2. Rules dipakai sebagai guardrail, validator, dan fallback bila AI gagal atau ambigu berat.
+3. Prompt AI disesuaikan agar schema output tetap ketat, raw truth tetap tersimpan, dan normalisasi tetap konsisten.
 
 Selesai kalau:
 
-1. AI jadi bantuan, bukan sumber utama yang bikin perilaku parser berubah liar.
+1. AI jadi parser utama tanpa mengorbankan raw truth atau auditability.
+
+### P6 — Integrasi downtime dengan data existing
+
+Fokus:
+
+1. Cocokkan downtime hasil parser dengan data existing yang sudah tersimpan di SQLite supaya tidak bentrok saat save.
+2. Pisahkan jalur dry-run, preview, dan save final agar error bisa ditangkap sebelum write.
+3. Jadikan `machine_raw`, `source_line`, `match_code`, dan `idempotency_key` sebagai kunci audit saat menggabungkan data baru dan data lama.
+4. Tambah aturan konflik yang jelas untuk kasus duplicate, overlap jam, machine mismatch, dan update ulang dari sumber WA yang sama.
+5. Jalankan integrasi bertahap per tanggal / shift / area sebelum full import.
+
+Selesai kalau:
+
+1. import downtime baru bisa digabung ke data existing tanpa membuat row dobel atau mapping liar.
+2. preview menunjukkan bedanya antara row baru, row update, dan row conflict sebelum save.
+3. ada jalur rollback atau replace yang jelas kalau hasil import tidak sesuai.
 
 ## Implementasi yang disarankan
 
@@ -127,7 +145,8 @@ Urutan praktis yang paling aman:
 4. Tambah observability preview.
 5. Perkuat import safety.
 6. Terakhir, poles AI fallback dan prompt.
-7. Simpan fixture regresi dan catatan contoh di docs supaya perubahan parser tetap auditable.
+7. Integrasikan downtime ke data existing dengan dry-run, conflict detection, dan staged save.
+8. Simpan fixture regresi dan catatan contoh di docs supaya perubahan parser tetap auditable.
 
 ## File target utama
 

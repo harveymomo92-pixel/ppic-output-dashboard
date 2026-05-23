@@ -119,6 +119,13 @@ button,
   text-overflow: ellipsis;
 }
 .downtime-submenu-item .sh-sidebar-menu-button .chevron { display: none; }
+.downtime-submenu-import {
+  grid-template-columns: minmax(0, 1fr);
+  padding-top: 2px;
+}
+.downtime-submenu-import .downtime-submenu-item {
+  grid-column: 1 / -1;
+}
 .settings-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -891,6 +898,28 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
   display: grid;
   gap: 12px;
 }
+.downtime-conflict-summary {
+  margin-top: 8px;
+}
+.downtime-conflict-lists {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+.downtime-conflict-lists > div {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 96%, var(--neutral));
+}
+.downtime-conflict-lists ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  color: var(--text);
+}
 .downtime-wa-blocks-head {
   display: flex;
   justify-content: space-between;
@@ -943,10 +972,23 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
   flex-wrap: wrap;
 }
 .downtime-wa-table {
-  min-width: 1120px;
+  min-width: 1240px;
+  width: max-content;
 }
 .downtime-wa-table-wrap {
   max-height: 420px;
+  scrollbar-gutter: stable both-edges;
+}
+.downtime-event-scroll {
+  max-height: 520px;
+}
+.downtime-event-scroll .detail-table {
+  min-width: 1320px;
+}
+@media (max-width: 1100px) {
+  .downtime-conflict-lists {
+    grid-template-columns: 1fr;
+  }
 }
 .downtime-error {
   color: #b42318;
@@ -1161,6 +1203,22 @@ th { background: var(--neutral); color: var(--muted); font-weight: 700; position
 .detail-table-wrap .detail-table {
   width: max-content;
   min-width: 100%;
+}
+
+.inline-audit-details {
+  margin-top: 4px;
+}
+.inline-audit-details > summary {
+  cursor: pointer;
+  list-style: none;
+}
+.inline-audit-details > summary::-webkit-details-marker {
+  display: none;
+}
+.inline-audit-stack {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
 }
 
 .target-table {
@@ -1745,6 +1803,27 @@ th { background: var(--neutral); color: var(--muted); font-weight: 700; position
   position: relative;
   display: inline-flex;
   align-items: center;
+}
+
+.structured-hover-cell {
+  display: inline-flex;
+  align-items: center;
+}
+
+.structured-hover-trigger {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.structured-hover-cell .structured-hover-trigger strong {
+  font-weight: 700;
+}
+
+.structured-hover-popover {
+  width: 340px;
 }
 
 .reject-cell.is-right .reject-popover {

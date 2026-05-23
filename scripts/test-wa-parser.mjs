@@ -48,6 +48,41 @@ Lancar`,
     },
   },
   {
+    name: 'downtime-hengfeng-compact-state',
+    text: `20 Mei 2026
+Shift 1
+Hengfeng 3
+Problem
+Lancar`,
+    parserMode: 'hybrid',
+    expect: {
+      parsedRows: 1,
+      structuredRows: 1,
+      matchCode: 'ai:catalog-exact',
+      matchSource: 'ai:catalog-exact',
+      warningIncludes: 'state:lancar',
+      condition: 'lancar',
+      aiUsed: true,
+    },
+  },
+  {
+    name: 'downtime-ai-reason-action-format',
+    text: `21 Mei 2026
+Shift 2
+Hengfeng 3
+Problem
+(09:10 - 09:40 = 30 menit) Sensor outfeed error karena botol nyangkut di conveyor
+Action: MTC reset sensor dan bersihkan jalur outfeed`,
+    parserMode: 'hybrid',
+    expect: {
+      parsedRows: 1,
+      structuredRows: 1,
+      matchCode: 'ai:catalog-exact',
+      matchSource: 'ai:catalog-exact',
+      aiUsed: true,
+    },
+  },
+  {
     name: 'production-summary',
     text: `TOTAL HASIL PRINTING
 OMSO 1: Hasil = 12000
@@ -63,7 +98,7 @@ async function runFixture(fixture) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       text: fixture.text,
-      parserMode: 'rules',
+      parserMode: fixture.parserMode || 'rules',
       aiProvider: 'gemini',
       import: false,
     }),
@@ -74,7 +109,6 @@ async function runFixture(fixture) {
   const data = payload.data || {};
 
   assert.equal(data.parserContractVersion, 'wa-downtime-v4', `${fixture.name}: contract version`);
-
   if (fixture.manualOnly) {
     return {
       name: fixture.name,
@@ -108,6 +142,17 @@ async function runFixture(fixture) {
   }
   if (fixture.expect.condition && data.rows?.[0]) {
     assert.equal(data.rows[0].condition, fixture.expect.condition, `${fixture.name}: condition`);
+  }
+  if (fixture.name === 'downtime-ai-reason-action-format' && data.rows?.[0]) {
+    const root = (data.rows[0].root_cause || '').toLowerCase();
+    const action = (data.rows[0].action_taken || '').toLowerCase();
+    assert.ok(!/^(problem|issue|gangguan|trouble|macet|mesin mati|stop)\b/i.test(root), `${fixture.name}: root_cause not generic`);
+    assert.ok(/sensor|conveyor|botol|outfeed/i.test(root), `${fixture.name}: root_cause specific`);
+    assert.ok(/reset|bersih|cek/i.test(action), `${fixture.name}: action specific`);
+    assert.ok(!/^(korektif|preventif|pic)\s*:/i.test(action), `${fixture.name}: action natural`);
+  }
+  if (fixture.expect.aiUsed !== undefined) {
+    assert.equal(data.aiUsed, fixture.expect.aiUsed, `${fixture.name}: aiUsed`);
   }
   if (fixture.expect.area && data.productionRows?.[0]) {
     assert.equal(data.productionRows[0].area, fixture.expect.area, `${fixture.name}: area`);

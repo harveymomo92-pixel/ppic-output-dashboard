@@ -61,7 +61,26 @@ Expected:
 - `warning_code = state:lancar`
 - `machine_match` tetap terisi sesuai hasil registry
 
-## Fixture 4 — Produksi summary
+## Fixture 4 — Kondisi mesin dengan label compact
+
+```text
+20 Mei 2026
+Shift 1
+Hengfeng 3
+Problem
+Lancar
+```
+
+Expected:
+
+- row kondisi mesin tetap dibuat
+- `condition = lancar`
+- `warning_code = state:lancar`
+- `machine_match = family`
+- `match_code = ai:catalog-exact`
+- hybrid AI-first tetap menyimpan `machine_raw` dan `source_line` untuk audit
+
+## Fixture 5 — Produksi summary
 
 Catatan: contoh ini masih diperlakukan sebagai sample manual-only. Parser produksi butuh format yang lebih kaya dari sampel di bawah untuk benar-benar keluar sebagai `productionRows` stabil.
 

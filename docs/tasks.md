@@ -52,6 +52,10 @@ Planning/PRD -> Frontend -> Backend -> Integration -> Deploy
 - [x] Add drag & drop upload to downtime backfill UI
 - [x] Support direct XLSX import for downtime backfill
 - [x] Add downtime backfill template download
+- [ ] Define staged integration plan for downtime with existing SQLite data
+- [ ] Add dry-run conflict preview before downtime save
+- [ ] Add conflict rules for duplicate, overlap, and machine mismatch during downtime merge
+- [ ] Add rollback/replace path for failed downtime import batches
 
 ## Phase 5 — Deploy
 
@@ -85,6 +89,14 @@ Planning/PRD -> Frontend -> Backend -> Integration -> Deploy
 - [x] Perkuat dedupe / idempotency saat import ulang hasil parse
 - [x] Perjelas rules-first vs AI fallback dalam dokumentasi dan prompt
 - [x] Update runbook / docs setelah perilaku parser stabil
+
+## Phase 8 — Downtime Existing Data Integration
+
+- [ ] Implement staged merge from parsed downtime into existing data
+- [ ] Add row-level conflict resolution preview
+- [ ] Add batch-level validation before write
+- [ ] Add rollback-safe replace flow for downtime batches
+- [ ] Verify integration on limited date/shift/area slices before full rollout
 
 ## MVP Acceptance Criteria
 

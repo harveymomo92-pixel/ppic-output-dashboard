@@ -1,7 +1,7 @@
 'use client';
 
 import * as Collapsible from '@radix-ui/react-collapsible';
-import { BarChart3, ChevronDown, Clock3, Database, Download, Factory, FileText, Filter, Gauge, HardDrive, RefreshCw, RotateCcw, Search, Settings2, SplitSquareVertical, Workflow, Table2 } from 'lucide-react';
+import { BarChart3, ChevronDown, Clock3, Database, Download, Factory, FileText, Filter, Gauge, HardDrive, RefreshCw, RotateCcw, Search, Settings2, SplitSquareVertical, Upload, Workflow, Table2 } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -220,7 +220,7 @@ export function DashboardSidebar({ activeView, onChangeView, downtimePanel, onCh
                   <Collapsible.Trigger asChild>
                     <SidebarMenuButton active={activeView === 'downtime'} onClick={() => onChangeView('downtime')}>
                       <Clock3 size={17} />
-                      <span>Gangguan</span>
+                      <span>Gangguan Produksi</span>
                       <ChevronDown className="chevron downtime-chevron" size={15} />
                     </SidebarMenuButton>
                   </Collapsible.Trigger>
@@ -232,6 +232,8 @@ export function DashboardSidebar({ activeView, onChangeView, downtimePanel, onCh
                         ['workflow', 'Alur', Workflow],
                         ['input', 'Input', FileText],
                         ['table', 'Daftar', Table2],
+                        ['followup', 'Tindak Lanjut', RotateCcw],
+                        ['analysis', 'Analisis', BarChart3],
                       ] as const).map(([panel, label, Icon]) => (
                         <div key={panel} className="downtime-submenu-item">
                           <SidebarMenuButton active={activeView === 'downtime' && downtimePanel === panel} onClick={() => { onChangeView('downtime'); onChangeDowntimePanel(panel); }}>
@@ -240,6 +242,16 @@ export function DashboardSidebar({ activeView, onChangeView, downtimePanel, onCh
                           </SidebarMenuButton>
                         </div>
                       ))}
+                    </div>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <div className="downtime-submenu downtime-submenu-import">
+                      <div className="downtime-submenu-item">
+                        <SidebarMenuButton active={activeView === 'downtime' && downtimePanel === 'import'} onClick={() => { onChangeView('downtime'); onChangeDowntimePanel('import'); }}>
+                          <Upload size={17} />
+                          <span>Import Backfill</span>
+                        </SidebarMenuButton>
+                      </div>
                     </div>
                   </SidebarMenuItem>
                 </Collapsible.Content>
