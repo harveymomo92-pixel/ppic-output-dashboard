@@ -56,6 +56,7 @@ Planning/PRD -> Frontend -> Backend -> Integration -> Deploy
 - [ ] Add dry-run conflict preview before downtime save
 - [ ] Add conflict rules for duplicate, overlap, and machine mismatch during downtime merge
 - [ ] Add rollback/replace path for failed downtime import batches
+- [ ] Automate weekday hourly OData sync with a scheduled timer
 
 ## Phase 5 — Deploy
 
@@ -97,6 +98,23 @@ Planning/PRD -> Frontend -> Backend -> Integration -> Deploy
 - [ ] Add batch-level validation before write
 - [ ] Add rollback-safe replace flow for downtime batches
 - [ ] Verify integration on limited date/shift/area slices before full rollout
+
+## Phase 9 — WA Parser Backlog
+
+Rincian prioritas, impact, effort, dan acceptance criteria ada di `docs/wa-parser-backlog.md`. Ambil item MVP dulu, urut dari atas.
+
+- [ ] Preview hasil parse sebelum simpan
+- [ ] Manual edit / override row
+- [ ] Confidence / quality score per row
+- [ ] Duplicate / merge guard
+- [ ] Dashboard KPI dasar
+- [ ] History import dasar
+- [ ] Export CSV / Excel
+- [ ] Rule builder untuk keyword parsing
+- [ ] Template management per format chat
+- [ ] Bulk review / approval queue
+- [ ] Analytics trend dan Pareto
+- [ ] Undo / rollback import
 
 ## MVP Acceptance Criteria
 

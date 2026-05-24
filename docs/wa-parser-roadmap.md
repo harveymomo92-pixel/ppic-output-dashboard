@@ -41,6 +41,8 @@ Yang masih perlu diperkuat:
 4. Fallback AI perlu guardrail dokumentasi yang tegas per mode, terutama rules-first vs hybrid.
 5. Output preview masih perlu diposisikan sebagai alat validasi, bukan sekadar hasil parse.
 
+Detail backlog operasional yang lebih granular ada di `docs/wa-parser-backlog.md`. Dokumen itu dipakai sebagai referensi eksekusi harian setelah roadmap ini.
+
 ## Urutan pengerjaan
 
 ### P0 — Stabilkan kontrak output
@@ -148,6 +150,8 @@ Urutan praktis yang paling aman:
 7. Integrasikan downtime ke data existing dengan dry-run, conflict detection, dan staged save.
 8. Simpan fixture regresi dan catatan contoh di docs supaya perubahan parser tetap auditable.
 
+Kalau mau lihat urutan fitur yang paling siap dikerjakan sekarang, mulai dari `docs/wa-parser-backlog.md` bagian MVP.
+
 ## File target utama
 
 1. `app/api/downtime-events/import/wa/route.ts`
@@ -157,6 +161,7 @@ Urutan praktis yang paling aman:
 5. `docs/tasks.md`
 6. `README.md`
 7. `docs/wa-parser-fixtures.md`
+8. `docs/wa-parser-backlog.md`
 
 ## Kriteria sukses
 

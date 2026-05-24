@@ -1,0 +1,11 @@
+[Unit]
+Description=PPIC Output Dashboard scheduled OData sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/.openclaw/workspace/projects/ppic-output-dashboard
+ExecStart=/bin/bash /root/.openclaw/workspace/projects/ppic-output-dashboard/scripts/run-odata-sync.sh
+Environment=PPIC_DASHBOARD_ENV_FILE=/root/.config/ppic-output-dashboard/runtime.env
+Environment=NODE_ENV=production
