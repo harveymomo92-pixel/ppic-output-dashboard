@@ -935,7 +935,7 @@ function parseProductionReport(text: string, catalog: MachineCatalog): Productio
     if (!currentSection) continue;
 
     const headerMatch = currentSection === 'PRINTING'
-      ? line.match(/^(?:P\d+\s*[:\-]?)?\s*([^:]+(?:omso|poly\s*print|polyprint|cai[- ]?\d|newdo[- ]?\d)[^:]*)\s*[:\-]\s*(.*)$/i)
+      ? line.match(/^(?:\*?\s*)?(?:P\d+\s*[:\-]?\s*)?((?:omso|poly\s*print|polyprint|cai[- ]?\d|newdo[- ]?\d)[^:]*)\s*[:\-]?\s*(.*)$/i)
       : line.match(/^(?:\*?\s*)?(hf\s*0?\d[^:]*)\s*[:\-]?\s*(.*)$/i);
 
     if (headerMatch && isProductionMachineHeader(line, currentSection)) {
@@ -966,12 +966,12 @@ function parseProductionReport(text: string, catalog: MachineCatalog): Productio
 
     if (currentSection === 'PRINTING') {
       const cleaned = formatMetricLine(line);
-      if (/^hasil[:=]/i.test(cleaned)) current.metrics.hasil = clean(cleaned.replace(/^hasil[:=]\s*/i, ''));
-      else if (/^(reject print|r\.print)[:=]/i.test(cleaned)) current.metrics.reject_print = clean(cleaned.replace(/^(reject print|r\.print)[:=]\s*/i, ''));
-      else if (/^(reject polos|r\.polos)[:=]/i.test(cleaned)) current.metrics.reject_polos = clean(cleaned.replace(/^(reject polos|r\.polos)[:=]\s*/i, ''));
-      else if (/^(reject set up|r\.set up)[:=]/i.test(cleaned)) current.metrics.reject_setup = clean(cleaned.replace(/^(reject set up|r\.set up)[:=]\s*/i, ''));
-      else if (/^%reject[:=]/i.test(cleaned)) current.metrics.reject_pct = clean(cleaned.replace(/^%reject[:=]\s*/i, ''));
-      else if (/^produktifitas|^produktivitas/i.test(cleaned)) current.metrics.productivity = clean(cleaned.replace(/^(produktifitas|produktivitas)[:=]\s*/i, ''));
+      if (/^hasil\s*[:=]/i.test(cleaned)) current.metrics.hasil = clean(cleaned.replace(/^hasil\s*[:=]\s*/i, ''));
+      else if (/^(reject print|r\.print)\s*[:=]/i.test(cleaned)) current.metrics.reject_print = clean(cleaned.replace(/^(reject print|r\.print)\s*[:=]\s*/i, ''));
+      else if (/^(reject polos|r\.polos)\s*[:=]/i.test(cleaned)) current.metrics.reject_polos = clean(cleaned.replace(/^(reject polos|r\.polos)\s*[:=]\s*/i, ''));
+      else if (/^(reject set up|r\.set up)\s*[:=]/i.test(cleaned)) current.metrics.reject_setup = clean(cleaned.replace(/^(reject set up|r\.set up)\s*[:=]\s*/i, ''));
+      else if (/^%reject\s*[:=]/i.test(cleaned)) current.metrics.reject_pct = clean(cleaned.replace(/^%reject\s*[:=]\s*/i, ''));
+      else if (/^(produktifitas|produktivitas)\s*[:=]/i.test(cleaned)) current.metrics.productivity = clean(cleaned.replace(/^(produktifitas|produktivitas)\s*[:=]\s*/i, ''));
       else current.notes.push(autoCorrectHighConfidenceTypos(cleaned).text);
     } else {
       const cleaned = formatMetricLine(line);
@@ -1227,6 +1227,7 @@ function inferConditionFromText(line: string) {
   if (/^[-–]*\s*(lancar|aman|normal|ok|all ok|steady)\s*$/i.test(text)) return 'lancar';
   if (/\boff\b/i.test(text)) return 'off';
   if (/\bstandby|waiting|tunggu order|waiting order\b/i.test(text)) return 'standby';
+  if (/\bchangeover\b|\bswitch over\b|\bswitching\b/i.test(text)) return 'changeover';
   if (/\bsetup|changeover|switch over|switching\b/i.test(text)) return 'setup';
   if (/\bclean|cleaning|wash|cuci\b/i.test(text)) return 'cleaning';
   if (/\btrial|test run|uji coba\b/i.test(text)) return 'trial';
@@ -1236,7 +1237,7 @@ function inferConditionFromText(line: string) {
 
 function parseMachineState(line: string) {
   const state = inferConditionFromText(line);
-  return ['lancar', 'off', 'standby', 'setup', 'cleaning', 'trial', 'running'].includes(state) ? state : '';
+  return ['lancar', 'off', 'standby', 'setup', 'cleaning', 'trial', 'running', 'changeover'].includes(state) ? state : '';
 }
 
 function isLikelyProblemStarter(line: string) {
@@ -1336,7 +1337,7 @@ function makeRow(context: ParserContext, line: string, timing: ReturnType<typeof
   };
 }
 
-function makeStateRow(context: ParserContext, state: 'lancar' | 'off' | 'standby' | 'setup' | 'cleaning' | 'trial' | 'running', line: string, sourceOrder = 0): ParsedWaDowntimeRow | null {
+function makeStateRow(context: ParserContext, state: 'lancar' | 'off' | 'standby' | 'setup' | 'cleaning' | 'trial' | 'running' | 'changeover', line: string, sourceOrder = 0): ParsedWaDowntimeRow | null {
   if (!context.eventDate || !context.shiftCode || !context.machine) return null;
   const shiftWindow = resolveShiftWindow(context.shiftCode);
   const resolved = resolveDowntimeWaTiming({

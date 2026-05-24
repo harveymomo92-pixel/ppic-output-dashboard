@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 
 const baseUrl = process.env.WA_PARSER_BASE_URL || 'http://127.0.0.1:3000';
+const hasAiProvider = Boolean(
+  process.env.GEMINI_API_KEY
+  || process.env.OPENAI_API_KEY
+  || process.env.GROQ_API_KEY
+  || process.env.MISTRAL_API_KEY
+  || process.env.WA_PARSER_AI_API_KEY
+);
 
 const fixtures = [
   {
@@ -17,6 +24,7 @@ Action: cek heater dan bersihkan jalur`,
       matchSource: 'family:borche',
       warningIncludes: 'timing:explicit',
       condition: 'downtime',
+      qualityReasonsNotInclude: ['shift_window'],
     },
   },
   {
@@ -48,6 +56,21 @@ Lancar`,
     },
   },
   {
+    name: 'downtime-lancar-with-note',
+    text: `20 Mei 2026
+Shift 3
+V-FINE 1
+Problem
+Lancar
+- catatan tambahan setelah state`,
+    expect: {
+      parsedRows: 0,
+      structuredRows: 1,
+      warningIncludes: 'state:lancar',
+      condition: 'lancar',
+    },
+  },
+  {
     name: 'downtime-hengfeng-compact-state',
     text: `20 Mei 2026
 Shift 1
@@ -64,6 +87,7 @@ Lancar`,
       condition: 'lancar',
       aiUsed: true,
     },
+    skipWithoutAi: true,
   },
   {
     name: 'downtime-lancar-zero-duration',
@@ -117,6 +141,23 @@ Problem
     },
   },
   {
+    name: 'downtime-changeover-state',
+    text: `26 Mei 2026
+Shift 2
+Hengfeng 3
+Problem
+Changeover`,
+    expect: {
+      parsedRows: 0,
+      structuredRows: 1,
+      warningIncludes: 'state:changeover',
+      condition: 'changeover',
+      startTime: '15:00',
+      endTime: '23:00',
+      durationMinutes: 480,
+    },
+  },
+  {
     name: 'downtime-raw-machine-review-gate',
     text: `25 Mei 2026
 Shift 1
@@ -147,6 +188,7 @@ Action: MTC reset sensor dan bersihkan jalur outfeed`,
       matchSource: 'ai:catalog-exact',
       aiUsed: true,
     },
+    skipWithoutAi: true,
   },
   {
     name: 'production-summary',
@@ -156,9 +198,29 @@ Reject print = 45
 Produktivitas = 92.5%`,
     manualOnly: true,
   },
+  {
+    name: 'production-summary-realistic',
+    text: `20 Mei 2026
+Shift 1
+TOTAL HASIL PRINTING
+OMSO 1: RICHEESE 12 OZ ND
+Hasil = 100 box
+Reject print = 45
+Produktivitas = 92.5%`,
+    expect: {
+      productionRows: 1,
+      area: 'PRINTING',
+    },
+  },
 ];
 
 async function runFixture(fixture) {
+  if (fixture.skipWithoutAi && !hasAiProvider) {
+    return {
+      name: fixture.name,
+      skipped: true,
+    };
+  }
   const response = await fetch(`${baseUrl}/api/downtime-events/import/wa`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -230,6 +292,12 @@ async function runFixture(fixture) {
   if (fixture.expect.qualityRisk) {
     assert.equal(data.quality?.riskLevel, fixture.expect.qualityRisk, `${fixture.name}: quality risk`);
   }
+  if (fixture.expect.qualityReasonsNotInclude?.length) {
+    const reasons = (data.quality?.reasons || []).map((reason) => String(reason));
+    for (const needle of fixture.expect.qualityReasonsNotInclude) {
+      assert.ok(!reasons.some((reason) => reason.includes(needle)), `${fixture.name}: quality reasons should not include ${needle}`);
+    }
+  }
   if (fixture.name === 'downtime-ai-reason-action-format' && data.rows?.[0]) {
     const root = (data.rows[0].root_cause || '').toLowerCase();
     const action = (data.rows[0].action_taken || '').toLowerCase();
@@ -243,6 +311,11 @@ async function runFixture(fixture) {
   }
   if (fixture.expect.area && data.productionRows?.[0]) {
     assert.equal(data.productionRows[0].area, fixture.expect.area, `${fixture.name}: area`);
+  }
+  if (fixture.expect.productionRows && data.productionRows?.[0]) {
+    assert.equal(data.productionRows[0].machine_master, 'OMSO 1', `${fixture.name}: production machine`);
+    assert.equal(data.productionRows[0].section_label, 'Total Hasil Printing', `${fixture.name}: production section label`);
+    assert.equal(data.productionRows[0].metric_hasil, '100 box', `${fixture.name}: production metric hasil`);
   }
 
   return {
