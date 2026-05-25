@@ -137,6 +137,11 @@ Current backend API:
 - `PUT /api/master-entity/:id`
 - `DELETE /api/master-entity/:id`
 
+Observability checks:
+
+- `npm run test:observability` — smoke check for `/api/settings` sync/import history contract
+- `npm run test:wa-parser` — regression gate for WA parser fixtures and audit fields
+
 Dashboard mapping rule:
 
 - OData `gProdOrRotLine_Description` is stored as SQLite `item_ledger_output.prod_line_description`

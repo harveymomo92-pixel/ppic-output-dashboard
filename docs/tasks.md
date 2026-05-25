@@ -22,11 +22,13 @@ Kalau melanjutkan kerja setelah sesi terputus, ambil urutan ini dulu:
    - status sync/import yang mudah dibaca
    - error state yang eksplisit
    - audit trail untuk OData dan downtime import
+   - riwayat import downtime tersimpan ke SQLite dan tampil di settings logs
 
 4. Tambah regression fixture/test
    - fixture parser WA
    - fixture import downtime
    - coverage normalizer/alias machine
+   - smoke test observability endpoint settings/logs
 
 5. Baru setelah itu polish
    - mobile ergonomics
@@ -81,6 +83,7 @@ Kalau melanjutkan kerja setelah sesi terputus, ambil urutan ini dulu:
 - [x] Move credential handling to environment variables/local secret only
 - [x] Add configurable date filter for OData refresh
 - [x] Add refresh status metadata
+- [x] Add downtime import history audit trail
 - [x] Add error handling for OData/network/auth failures
 - [x] Extract `External_Document_No` into shift / work hours / operator during import
 - [x] Add downtime backfill import from CSV/Excel with idempotent upsert
@@ -125,6 +128,7 @@ Kalau melanjutkan kerja setelah sesi terputus, ambil urutan ini dulu:
 - [x] Perkuat dedupe / idempotency saat import ulang hasil parse
 - [x] Perjelas rules-first vs AI fallback dalam dokumentasi dan prompt
 - [x] Update runbook / docs setelah perilaku parser stabil
+- [x] Add executable observability smoke test for settings/logs contract
 
 ## Phase 8 — Downtime Existing Data Integration
 

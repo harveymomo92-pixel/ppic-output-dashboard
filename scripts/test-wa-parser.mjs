@@ -100,6 +100,20 @@ Off`,
     },
   },
   {
+    name: 'downtime-standby-state',
+    text: `23 Mei 2026
+Shift 2
+HF 03
+Problem
+Waiting order`,
+    expect: {
+      parsedRows: 0,
+      structuredRows: 1,
+      warningIncludes: 'state:standby',
+      condition: 'standby',
+    },
+  },
+  {
     name: 'downtime-duration-inferred-from-shift-start',
     text: `24 Mei 2026
 Shift 2
@@ -202,6 +216,10 @@ async function runFixture(fixture) {
   }
   if (fixture.expect.matchSource && firstRow) {
     assert.equal(firstRow.match_source, fixture.expect.matchSource, `${fixture.name}: match_source`);
+  }
+  if (firstRow && !fixture.manualOnly) {
+    assert.ok(String(firstRow.match_reason || '').trim(), `${fixture.name}: match_reason populated`);
+    assert.ok(String(firstRow.warning_code || '').trim() || String(firstRow.warning || '').trim(), `${fixture.name}: warning populated`);
   }
   if (fixture.expect.warningIncludes && data.rows?.[0]) {
     assert.ok(String(data.rows[0].warning_code || '').includes(fixture.expect.warningIncludes), `${fixture.name}: warning_code includes ${fixture.expect.warningIncludes}`);

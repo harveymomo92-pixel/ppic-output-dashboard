@@ -80,6 +80,12 @@ function ensureDowntimeEventColumns(db: DatabaseSync) {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_downtime_events_natural_key ON downtime_events(event_date, shift_code, area, machine, line, category, start_time, end_time)');
 }
 
+function ensureDowntimeImportRunsTable(db: DatabaseSync) {
+  const existing = new Set((db.prepare('PRAGMA table_info(downtime_import_runs)').all() as Array<{ name: string }>).map((row) => row.name));
+  if (!existing.size) return;
+  db.exec('CREATE INDEX IF NOT EXISTS idx_downtime_import_runs_created_at ON downtime_import_runs(created_at DESC)');
+}
+
 let cachedSchemaSql: string | null = null;
 
 export function getDb() {
@@ -91,6 +97,7 @@ export function getDb() {
   ensureMasterEntityColumns(db);
   ensureItemLedgerColumns(db);
   ensureDowntimeEventColumns(db);
+  ensureDowntimeImportRunsTable(db);
   return db;
 }
 

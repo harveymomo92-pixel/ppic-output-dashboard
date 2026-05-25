@@ -194,6 +194,7 @@ type AppSettingsResponse = {
   ok: boolean;
   settings: SettingsDataType['settings'];
   syncHistory: SettingsDataType['syncHistory'];
+  importHistory: SettingsDataType['importHistory'];
 };
 
 const emptyDashboard: DashboardData = {

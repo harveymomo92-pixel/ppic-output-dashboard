@@ -67,6 +67,27 @@ CREATE TABLE IF NOT EXISTS sync_runs (
   message TEXT
 );
 
+CREATE TABLE IF NOT EXISTS downtime_import_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source TEXT NOT NULL,
+  import_kind TEXT NOT NULL DEFAULT 'file',
+  mode TEXT NOT NULL DEFAULT 'append',
+  parser_mode TEXT,
+  ai_provider TEXT,
+  processed_rows INTEGER NOT NULL DEFAULT 0,
+  saved_rows INTEGER NOT NULL DEFAULT 0,
+  inserted_rows INTEGER NOT NULL DEFAULT 0,
+  updated_rows INTEGER NOT NULL DEFAULT 0,
+  existing_rows INTEGER NOT NULL DEFAULT 0,
+  skipped_rows INTEGER NOT NULL DEFAULT 0,
+  total_rows INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'success',
+  message TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_downtime_import_runs_created_at ON downtime_import_runs(created_at DESC);
+
 CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL DEFAULT '',

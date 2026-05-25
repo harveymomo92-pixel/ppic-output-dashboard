@@ -267,6 +267,24 @@ export async function POST(request: NextRequest) {
 
       db.exec('COMMIT');
       const total = db.prepare('SELECT COUNT(*) AS count FROM downtime_events').get() as { count: number };
+      db.prepare(`
+        INSERT INTO downtime_import_runs (
+          source, import_kind, mode, status, processed_rows, saved_rows, inserted_rows, updated_rows, existing_rows, skipped_rows, total_rows, message
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        file.name || 'downtime-import',
+        isXlsx ? 'xlsx' : 'csv',
+        mode,
+        'success',
+        rows.length,
+        savedRows,
+        savedRows,
+        0,
+        0,
+        skippedRows,
+        total.count,
+        `${mode === 'replace' ? 'replace' : 'append'} import ${isXlsx ? 'XLSX' : 'CSV'} ok (${savedRows} saved, ${skippedRows} skip)`,
+      );
       const sample = db.prepare('SELECT event_date, machine, category, status, duration_minutes FROM downtime_events ORDER BY event_date DESC, start_time DESC, id DESC LIMIT 3').all();
 
       return NextResponse.json({

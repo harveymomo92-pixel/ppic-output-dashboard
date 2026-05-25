@@ -2438,6 +2438,33 @@ export async function POST(request: NextRequest) {
   const message = result.insertedRows > 0
     ? `Import Copas WA ok (${result.insertedRows} baris baru, ${result.updatedRows} update, ${result.skippedRows + parsed.skipped.length} skip)`
     : `Import Copas WA: data sudah ada (${result.existingRows} baris match), tidak ada baris baru masuk`;
+  if (shouldImport) {
+    const db = getDb();
+    try {
+      db.prepare(`
+        INSERT INTO downtime_import_runs (
+          source, import_kind, mode, parser_mode, ai_provider, status, processed_rows, saved_rows, inserted_rows, updated_rows, existing_rows, skipped_rows, total_rows, message
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        'copas-wa',
+        'wa',
+        mode,
+        parserMode,
+        aiProvider,
+        'success',
+        result.savedRows || 0,
+        result.savedRows || 0,
+        result.insertedRows || 0,
+        result.updatedRows || 0,
+        result.existingRows || 0,
+        result.skippedRows + parsed.skipped.length,
+        result.total || 0,
+        message,
+      );
+    } finally {
+      db.close();
+    }
+  }
   return NextResponse.json({
     data: {
       source: 'copas-wa',
