@@ -1,0 +1,19 @@
+[Unit]
+Description=PPIC Output Dashboard scheduled OData sync timer
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 08:00:00
+OnCalendar=Mon..Fri *-*-* 09:00:00
+OnCalendar=Mon..Fri *-*-* 10:00:00
+OnCalendar=Mon..Fri *-*-* 11:00:00
+OnCalendar=Mon..Fri *-*-* 12:00:00
+OnCalendar=Mon..Fri *-*-* 13:00:00
+OnCalendar=Mon..Fri *-*-* 14:00:00
+OnCalendar=Mon..Fri *-*-* 15:00:00
+OnCalendar=Mon..Fri *-*-* 16:00:00
+OnCalendar=Mon..Fri *-*-* 17:00:00
+Persistent=true
+Unit=ppic-output-dashboard-sync.service
+
+[Install]
+WantedBy=timers.target

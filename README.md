@@ -23,6 +23,7 @@ Dashboard internal untuk monitoring output produksi PPIC dari Business Central O
 - `docs/ux-audit-first-time-user.md` — UX audit dan tahapan perbaikan untuk first-time user
 - `docs/ux-roadmap-first-time-user.md` — roadmap implementasi UX berdasarkan audit
 - `docs/wa-parser-roadmap.md` — roadmap penguatan parser WA dan normalizer downtime
+- `docs/wa-parser-backlog.md` — backlog operasional parser WA dengan prioritas, effort, dan acceptance criteria
 - `docs/data-profile.json` — initial data profile from current CSV
 - `docs/master-entity-target-produksi.json` — full master target entity data (42 rows)
 - `docs/master-entity-target-summary.json` — summary/profil master target entity
@@ -55,6 +56,32 @@ npm run db:sync -- --source "$PPIC_ODATA_URL"
 ```
 
 Live OData sync now checks the latest remote `Entry_No` first. If there is no new data, it records `tidak ada data baru` and skips import. If there is new data, it only pulls rows with `Entry_No` above the latest local row in the active sync range.
+
+### Scheduled OData sync
+
+A weekday sync timer is available via systemd user units. By default it runs every hour on Monday-Friday at `08:00` through `17:00` local time and calls the live OData sync wrapper using `PPIC_ODATA_URL` from the runtime env file.
+
+Files:
+
+- `deploy/systemd/ppic-output-dashboard-sync.service`
+- `deploy/systemd/ppic-output-dashboard-sync.timer`
+- `scripts/run-odata-sync.sh`
+
+Install on this host:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/systemd/ppic-output-dashboard-sync.service ~/.config/systemd/user/
+cp deploy/systemd/ppic-output-dashboard-sync.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now ppic-output-dashboard-sync.timer
+```
+
+Inspect trigger times:
+
+```bash
+systemctl --user list-timers ppic-output-dashboard-sync.timer
+```
 
 ### Downtime backfill import
 
@@ -115,11 +142,19 @@ GEMINI_MODEL=gemini-2.5-flash
 OPENAI_API_KEY=sk-...
 WA_PARSER_AI_MODEL=gpt-4o-mini
 OPENAI_BASE_URL=https://api.openai.com/v1
+
+# Groq fallback
+GROQ_API_KEY=gsk_...
+GROQ_MODEL=llama-3.3-70b-versatile
+
+# Mistral fallback
+MISTRAL_API_KEY=...
+MISTRAL_MODEL=ministral-8b-2512
 ```
 
 Perilaku fallback:
-- jika provider dipilih **Gemini**, lalu error/quota/limit → fallback ke **OpenAI**
-- kalau dua-duanya gagal → fallback ke **rules parser**
+- jika provider dipilih **Gemini**, lalu error/quota/limit → fallback ke **OpenAI**, lalu **Groq**, lalu **Mistral**
+- kalau semua provider gagal → fallback ke **rules parser**
 
 Lalu restart dev server:
 
@@ -127,7 +162,7 @@ Lalu restart dev server:
 npm run dev
 ```
 
-Kalau `GEMINI_API_KEY` atau `OPENAI_API_KEY` kosong, provider itu dilewati otomatis.
+Kalau API key provider kosong, provider itu dilewati otomatis.
 
 ## Prototype Frontend
 

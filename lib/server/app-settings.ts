@@ -4,8 +4,12 @@ import { loadRuntimeEnv } from '@/lib/server/runtime-env';
 export const APP_SETTING_KEYS = [
   'GEMINI_API_KEY',
   'OPENAI_API_KEY',
+  'GROQ_API_KEY',
+  'MISTRAL_API_KEY',
   'OPENAI_BASE_URL',
   'GEMINI_MODEL',
+  'GROQ_MODEL',
+  'MISTRAL_MODEL',
   'WA_PARSER_AI_MODEL',
   'PPIC_ODATA_URL',
   'PPIC_ODATA_USER',
@@ -19,7 +23,7 @@ export const APP_SETTING_KEYS = [
 
 export type AppSettingKey = typeof APP_SETTING_KEYS[number];
 
-const secretKeys = new Set<AppSettingKey>(['GEMINI_API_KEY', 'OPENAI_API_KEY', 'PPIC_ODATA_PASSWORD', 'PPIC_ODATA_TOKEN']);
+const secretKeys = new Set<AppSettingKey>(['GEMINI_API_KEY', 'OPENAI_API_KEY', 'GROQ_API_KEY', 'MISTRAL_API_KEY', 'PPIC_ODATA_PASSWORD', 'PPIC_ODATA_TOKEN']);
 
 export function loadAppSettings() {
   const db = getDb();

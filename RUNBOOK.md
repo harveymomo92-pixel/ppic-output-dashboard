@@ -90,6 +90,37 @@ Behavior for live OData sync:
 - if newer data exists, only rows above the latest local `Entry_No` are fetched and appended
 - live OData sync always forces `Entry_Type = Output`
 
+### Automated weekday sync
+
+Use the systemd user timer shipped in `deploy/systemd/` if you want live OData sync to run automatically on workdays:
+
+- `deploy/systemd/ppic-output-dashboard-sync.service`
+- `deploy/systemd/ppic-output-dashboard-sync.timer`
+- `scripts/run-odata-sync.sh`
+
+Default schedule:
+
+- Monday-Friday
+- Every hour from `08:00` through `17:00`
+- Uses local system time
+
+Install on this host:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/systemd/ppic-output-dashboard-sync.service ~/.config/systemd/user/
+cp deploy/systemd/ppic-output-dashboard-sync.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now ppic-output-dashboard-sync.timer
+```
+
+Check status and logs:
+
+```bash
+systemctl --user list-timers ppic-output-dashboard-sync.timer
+journalctl --user -u ppic-output-dashboard-sync.service -f
+```
+
 Database path:
 
 ```text

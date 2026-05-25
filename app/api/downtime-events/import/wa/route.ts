@@ -226,7 +226,7 @@ function applyShiftWindowFallback(row: ParsedWaDowntimeRow): ParsedWaDowntimeRow
     resolved.startTime !== clean(row.start_time)
     || resolved.endTime !== clean(row.end_time)
     || resolved.durationMinutes !== row.duration_minutes
-    || resolved.condition !== clean(row.condition).toLowerCase();
+    || (resolved.condition && resolved.condition !== clean(row.condition).toLowerCase());
   if (!usedFallback) return row;
   const warningCode = mergeCodes(row.warning_code, 'timing:shift_window');
   const warning = mergeCodes(
