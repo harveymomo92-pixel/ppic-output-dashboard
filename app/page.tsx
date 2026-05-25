@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, CalendarDays, Clock3, Database, Download, Factory, FileText, PackageSearch, Pencil, Plus, Save, Settings2, Trash2, Upload, X } from 'lucide-react';
+import { Activity, CalendarDays, Clock3, Download, FileText, PackageSearch, Pencil, Plus, RotateCcw, Save, Settings2, Trash2, Upload, X } from 'lucide-react';
 import { DashboardSidebar, type DashboardFilters } from '@/components/dashboard/dashboard-sidebar';
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { buildMachineSynonymPack, cleanText, decimalFmt, exportCsv, normalizeCode, normalizeMachineAliasText, numberFmt, toNumber } from '@/lib/dashboard';
@@ -533,6 +533,12 @@ type SavedFilterState = {
   trendLocalFilters: TrendLocalFilters;
 };
 
+type DetailReturnState = {
+  view: ViewMode;
+  detailTableFilters: DetailTableFilters;
+  detailTablePage: number;
+};
+
 const emptySavedFilterState: SavedFilterState = {
   detailTableFilters: emptyDetailTableFilters,
   targetTableFilters: emptyTargetTableFilters,
@@ -557,6 +563,17 @@ function getJakartaNowTime() {
     minute: '2-digit',
     hour12: false,
   }).format(new Date());
+}
+
+function getDefaultDowntimeShiftCode() {
+  const jakartaHour = Number(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Jakarta',
+    hour: '2-digit',
+    hour12: false,
+  }).format(new Date()));
+  if (jakartaHour >= 7 && jakartaHour < 15) return 'Shift 1';
+  if (jakartaHour >= 15 && jakartaHour < 23) return 'Shift 2';
+  return 'Shift 3';
 }
 
 function getLastDayOfMonth(month: string) {
@@ -694,6 +711,7 @@ function formFromDowntimeEvent(row: DowntimeEventRow): DowntimeEventForm {
 
 function createDowntimeEventDraft(form: Partial<DowntimeEventForm> = {}, editingId: string | null = null): DowntimeEventDraft {
   const nowTime = getJakartaNowTime();
+  const defaultShiftCode = getDefaultDowntimeShiftCode();
   return {
     ui_id: `downtime-draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     editingId,
@@ -702,6 +720,7 @@ function createDowntimeEventDraft(form: Partial<DowntimeEventForm> = {}, editing
       start_time: nowTime,
       end_time: nowTime,
       ...form,
+      shift_code: form.shift_code || defaultShiftCode,
     },
   };
 }
@@ -1165,14 +1184,16 @@ function DataTableToolbar({
   totalCount,
   hasActiveFilters,
   onReset,
+  compactMobile = false,
 }: {
   left: React.ReactNode;
   totalCount: number;
   hasActiveFilters: boolean;
   onReset: () => void;
+  compactMobile?: boolean;
 }) {
   return (
-    <div className="detail-table-toolbar">
+    <div className={`detail-table-toolbar${compactMobile ? ' is-compact-mobile' : ''}`}>
       <div className="detail-table-toolbar-group">{left}</div>
       <div className="detail-table-toolbar-group detail-table-toolbar-meta">
         <span className="local-filter-count">{numberFmt.format(totalCount)} data</span>
@@ -1325,6 +1346,7 @@ export default function Home() {
   const [masterForm, setMasterForm] = useState<MasterEntityForm>(emptyMasterForm);
   const [detailTableFilters, setDetailTableFilters] = useState<DetailTableFilters>(emptyDetailTableFilters);
   const [detailTablePage, setDetailTablePage] = useState(1);
+  const [detailReturnState, setDetailReturnState] = useState<DetailReturnState | null>(null);
   const [targetTableFilters, setTargetTableFilters] = useState<TargetTableFilters>(emptyTargetTableFilters);
   const [targetTablePage, setTargetTablePage] = useState(1);
   const [trendLocalFilters, setTrendLocalFilters] = useState<TrendLocalFilters>(emptyTrendLocalFilters);
@@ -2054,10 +2076,27 @@ export default function Home() {
   };
 
   const openDetailDrilldown = (patch: Partial<DetailTableFilters>) => {
+    setDetailReturnState({
+      view: activeView,
+      detailTableFilters,
+      detailTablePage,
+    });
     setActiveView('data-detail');
     setDetailTableFilters({ ...emptyDetailTableFilters, ...patch });
     setDetailTablePage(1);
     scrollToSection('detail-table-section');
+  };
+
+  const backFromDetail = () => {
+    const returnState = detailReturnState ?? {
+      view: 'overview' as ViewMode,
+      detailTableFilters: emptyDetailTableFilters,
+      detailTablePage: 1,
+    };
+    setDetailTableFilters(returnState.detailTableFilters);
+    setDetailTablePage(returnState.detailTablePage);
+    setActiveView(returnState.view);
+    setDetailReturnState(null);
   };
 
   const openTargetDrilldown = (patch: Partial<TargetTableFilters>) => {
@@ -2132,6 +2171,11 @@ export default function Home() {
         if (!cancelled) setSettingsLoading(false);
       });
     return () => { cancelled = true; };
+  }, [activeView]);
+
+  useEffect(() => {
+    if (activeView === 'data-detail') return;
+    setDetailReturnState(null);
   }, [activeView]);
 
   useEffect(() => {
@@ -2785,7 +2829,7 @@ export default function Home() {
           event_date: previous.event_date || downtimeEventDefaultDate,
           start_time: previous.start_time || getJakartaNowTime(),
           end_time: previous.end_time || getJakartaNowTime(),
-          shift_code: previous.shift_code || 'Shift 1',
+          shift_code: previous.shift_code || getDefaultDowntimeShiftCode(),
           area: previous.area,
           category: previous.category,
         }),
@@ -3096,9 +3140,17 @@ export default function Home() {
           <header className="topbar">
             <div className="topbar-left">
               <span className="topbar-mobile-trigger"><SidebarTrigger /></span>
-              <div>
+              <div className="topbar-title-block">
                 <p className="eyebrow">PPIC Output Dashboard · Prototype</p>
-                <h1>{activeView === 'master-entity' ? 'Data Mesin & Target' : activeView === 'data-detail' ? 'Detail Produksi Harian' : activeView === 'downtime' ? 'Gangguan Produksi' : activeView === 'compare-period' ? 'Bandingkan Periode' : activeView === 'settings' ? 'Pengaturan Sistem' : 'Ringkasan Produksi'}</h1>
+                <div className="topbar-title-row">
+                  <h1>{activeView === 'master-entity' ? 'Data Mesin & Target' : activeView === 'data-detail' ? 'Detail Produksi Harian' : activeView === 'downtime' ? 'Gangguan Produksi' : activeView === 'compare-period' ? 'Bandingkan Periode' : activeView === 'settings' ? 'Pengaturan Sistem' : 'Ringkasan Produksi'}</h1>
+                  {activeView === 'data-detail' ? (
+                    <button className="btn secondary topbar-back-btn" type="button" onClick={backFromDetail}>
+                      <RotateCcw size={16} />
+                      <span>{detailReturnState?.view === 'overview' ? 'Kembali ke Ringkasan' : 'Kembali'}</span>
+                    </button>
+                  ) : null}
+                </div>
               </div>
             </div>
             <button
@@ -3111,27 +3163,6 @@ export default function Home() {
               <Download size={16}/><span className="btn-label">{exporting ? 'Exporting...' : 'Export'}</span>
             </button>
           </header>
-
-          <section className="hero card">
-            <div>
-              <p className="subtitle">
-                {activeView === 'master-entity'
-                  ? 'Kelola data mesin dan target hariannya dari satu tempat.'
-                  : activeView === 'downtime'
-                    ? 'Pantau gangguan mesin, input kejadian, dan tindak lanjut dalam satu alur sederhana.'
-                    : activeView === 'settings'
-                      ? 'Atur koneksi data, AI, dan riwayat sinkronisasi dari satu tempat.'
-                    : activeView === 'compare-period'
-                      ? 'Bandingkan periode aktif dengan periode sebelumnya per area dan per mesin.'
-                      : 'Lihat ringkasan hasil produksi, pencapaian, reject, dan mesin yang perlu perhatian.'}
-              </p>
-              <div className="badges">
-                <span className="badge"><Database size={15}/> SQLite API</span>
-                <span className="badge"><Factory size={15}/> Nama mesin pakai display</span>
-                <span className="badge"><Activity size={15}/> Recharts</span>
-              </div>
-            </div>
-          </section>
 
           <section className="main">
             {(activeView === 'overview' || activeView === 'downtime') ? (
@@ -3176,41 +3207,12 @@ export default function Home() {
                 downtimeSignalLabel={downtimeSignalLabel as any}
               />
             ) : null}
-            {activeView === 'downtime' ? (
-              <section className="card downtime-nav-card">
-                <div className="chart-head downtime-nav-head">
-                  <div>
-                    <h2>Gangguan Produksi</h2>
-                    <p>Pilih workflow utama untuk pantau, input, tindak lanjut, dan analisis. Import tetap dipisah supaya alurnya tidak campur.</p>
-                  </div>
-                  <div className="downtime-tabs">
-                    {(['workflow', 'input', 'table', 'followup', 'analysis'] as DowntimePanel[]).map((panel) => (
-                      <button key={panel} type="button" className={`downtime-tab ${downtimePanel === panel ? 'is-active' : ''}`} onClick={() => setDowntimePanel(panel)}>
-                        <span>{downtimePanelLabels[panel]}</span>
-                        <em>utama</em>
-                      </button>
-                    ))}
-                    <details className="advanced-disclosure">
-                      <summary>Import</summary>
-                      <div className="advanced-disclosure-menu">
-                        {(['import'] as DowntimePanel[]).map((panel) => (
-                          <button key={panel} type="button" className={`downtime-tab ${downtimePanel === panel ? 'is-active' : ''}`} onClick={() => setDowntimePanel(panel)}>
-                            <span>{downtimePanelLabels[panel]}</span>
-                            <em>terpisah</em>
-                          </button>
-                        ))}
-                      </div>
-                    </details>
-                  </div>
-                </div>
-              </section>
-            ) : null}
             {activeView === 'downtime' && downtimePanel !== 'analysis' ? (
-              <section className="card downtime-panel-card" id="downtime-panel-content">
+              <section className="card pad downtime-panel-card" id="downtime-panel-content">
                 <div className="chart-head">
                   <div>
                     <h2>Gangguan Produksi · {downtimePanelLabels[downtimePanel]}</h2>
-                    <p>Workflow utama, tindak lanjut, dan analisis saling terhubung. Import tetap dipisah supaya aman saat backfill.</p>
+                    <p>Workflow utama saling terhubung. Import tetap dipisah supaya aman saat backfill.</p>
                   </div>
                 </div>
 
@@ -3493,10 +3495,6 @@ export default function Home() {
 
                 {downtimePanel === 'input' ? (
                   <div className="downtime-input-stack">
-                    <div className="detail-table-toolbar-group">
-                      <button className="btn secondary" type="button" onClick={addDowntimeEventDraft}>+ Tambah Card</button>
-                      <button className="btn secondary" type="button" onClick={resetDowntimeEventForm}>Reset All</button>
-                    </div>
                     {downtimeEventDrafts.map((draft, index) => (
                       <section key={draft.ui_id} className="card pad soft-card downtime-input-card">
                         <div className="chart-head downtime-input-card-head">
@@ -3569,6 +3567,10 @@ export default function Home() {
                         </div>
                       </section>
                     ))}
+                    <div className="detail-table-toolbar-group downtime-input-stack-actions">
+                      <button className="btn secondary" type="button" onClick={addDowntimeEventDraft}>+ Tambah Card</button>
+                      <button className="btn secondary" type="button" onClick={resetDowntimeEventForm}>Reset All</button>
+                    </div>
                     <div className="detail-table-toolbar-group">
                       <button className="btn primary" type="button" onClick={saveDowntimeEvents} disabled={savingDowntimeEvent}>{savingDowntimeEvent ? 'Saving...' : 'Save Events'}</button>
                     </div>
@@ -3837,6 +3839,7 @@ export default function Home() {
                   </div>
                 </div>
                 <DataTableToolbar
+                  compactMobile
                   left={(
                     <>
                       <TableFilterInput
