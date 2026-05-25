@@ -161,3 +161,14 @@ npm run start
 ## Known note
 
 `npm audit` currently reports moderate advisories from the installed Next.js/PostCSS chain. `npm audit fix --force` is not recommended because npm suggests a breaking downgrade. Recheck after dependency updates.
+
+## If resuming work
+
+Start from the smallest useful next step:
+
+1. Improve first-time user guidance and sidebar clarity.
+2. Harden downtime import flow with preview, conflict handling, and staged merge.
+3. Add parser/import regression fixtures before expanding behavior.
+4. Polish mobile ergonomics after the core flow feels stable.
+
+This order keeps the dashboard easy to continue from a fresh session without reopening all the docs.

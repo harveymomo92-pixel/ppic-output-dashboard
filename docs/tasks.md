@@ -4,6 +4,41 @@
 
 Planning/PRD -> Frontend -> Backend -> Integration -> Deploy
 
+## Resume Here
+
+Kalau melanjutkan kerja setelah sesi terputus, ambil urutan ini dulu:
+
+1. Rapikan first-time user flow
+   - quick start/onboarding singkat
+   - label operasional yang lebih jelas
+   - sidebar lebih sederhana
+
+2. Perkuat downtime flow
+   - pisahkan basic flow vs import/parser/analysis
+   - tampilkan preview diff dan warning sebelum save
+   - siapkan staged merge ke data existing SQLite
+
+3. Tambah observability
+   - status sync/import yang mudah dibaca
+   - error state yang eksplisit
+   - audit trail untuk OData dan downtime import
+
+4. Tambah regression fixture/test
+   - fixture parser WA
+   - fixture import downtime
+   - coverage normalizer/alias machine
+
+5. Baru setelah itu polish
+   - mobile ergonomics
+   - spacing/layout detail
+   - performance saat data makin besar
+
+## Short-Term Direction
+
+- Fokus utama saat ini: usability dulu, lalu integrasi downtime yang aman.
+- Jangan mulai dari fitur baru yang besar sebelum flow dasar lebih jelas.
+- Kalau ada perubahan parser/import, update fixture dan docs bersamaan supaya mudah dilanjutkan.
+
 ## Phase 1 — Planning / PRD
 
 - [x] Create project folder structure

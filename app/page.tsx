@@ -1416,6 +1416,74 @@ export default function Home() {
     analysis: 'Analisis',
   } satisfies Record<DowntimePanel, string>), []);
 
+  const downtimePanelGuides = useMemo(() => ({
+    workflow: {
+      title: 'Alur kerja downtime',
+      subtitle: 'Pantau gap output dulu, lalu pindah ke input atau tindak lanjut kalau ada event yang perlu dibenahi.',
+      next: 'Kalau gap sudah jelas, buka Input Event atau Tindak Lanjut.',
+      steps: [
+        { title: '1. Baca prioritas mesin', text: 'Lihat mesin dengan gap terbesar dan cek apakah sudah ada event terkait.' },
+        { title: '2. Masuk ke input', text: 'Tambah event downtime hanya kalau ada gangguan yang memang perlu dicatat.' },
+        { title: '3. Lanjutkan follow up', text: 'Update root cause, action, dan status sampai event siap ditutup.' },
+      ],
+    },
+    input: {
+      title: 'Input event cepat',
+      subtitle: 'Satu card mewakili satu event. Field yang sama bisa ikut terbawa supaya input berulang lebih cepat.',
+      next: 'Tambah card baru kalau ada event lain di shift yang sama.',
+      steps: [
+        { title: '1. Tambah card', text: 'Mulai dari satu event, lalu copy-forward field yang stabil dari card sebelumnya.' },
+        { title: '2. Isi jam dan detail', text: 'Fokus ke mesin, waktu mulai/selesai, dan penyebab utama.' },
+        { title: '3. Save semua kartu', text: 'Simpan sekali di bagian bawah setelah semua event diisi.' },
+      ],
+    },
+    import: {
+      title: 'Import backfill',
+      subtitle: 'Dipakai untuk kirim histori dari CSV/XLSX. Append aman dipakai dulu, replace hanya kalau yakin perlu ganti batch lama.',
+      next: 'Download template dulu kalau format file belum seragam.',
+      steps: [
+        { title: '1. Ambil template', text: 'Template CSV/XLSX sudah disederhanakan ke field yang benar-benar diisi user.' },
+        { title: '2. Upload file', text: 'Pilih append untuk aman, lalu cek hasil preview sebelum save final.' },
+        { title: '3. Validasi conflict', text: 'Kalau ada overlap atau duplikat, cocokkan dengan data existing dulu sebelum replace.' },
+      ],
+    },
+    followup: {
+      title: 'Tindak lanjut',
+      subtitle: 'Pakai panel ini untuk menutup gap root cause dan menandai event yang sudah selesai diproses.',
+      next: 'Prioritaskan event open atau monitoring yang punya loss terbesar.',
+      steps: [
+        { title: '1. Pilih event terbuka', text: 'Fokus ke event dengan loss output atau durasi paling tinggi.' },
+        { title: '2. Isi root cause', text: 'Pastikan penyebab dan action singkat tapi jelas.' },
+        { title: '3. Tutup status', text: 'Turunkan status ke closed kalau follow up sudah selesai.' },
+      ],
+    },
+    table: {
+      title: 'Daftar downtime',
+      subtitle: 'Daftar dipakai untuk cek histori cepat, filter per shift atau kategori, lalu edit baris yang perlu dibenahi.',
+      next: 'Kalau cari pola, gunakan filter shift, status, dan kategori dulu.',
+      steps: [
+        { title: '1. Filter data', text: 'Saring berdasarkan shift, status, atau kategori agar review lebih cepat.' },
+        { title: '2. Cek detail', text: 'Gunakan tabel untuk melihat baris yang perlu koreksi.' },
+        { title: '3. Edit seperlunya', text: 'Update event yang salah lalu simpan kembali.' },
+      ],
+    },
+    analysis: {
+      title: 'Analisis downtime',
+      subtitle: 'Panel ini mengubah gap output jadi daftar prioritas. Tujuannya bukan mengganti data, tapi mengarahkan tindakan.',
+      next: 'Gunakan hasil ranking mesin untuk tentukan event mana yang dikerjakan duluan.',
+      steps: [
+        { title: '1. Lihat ranking loss', text: 'Mesin dengan loss terbesar biasanya paling layak dibongkar dulu.' },
+        { title: '2. Cek komposisi gangguan', text: 'Lihat apakah masalah dominan ada di setup, material, listrik, atau minor stop.' },
+        { title: '3. Masuk ke workflow', text: 'Setelah prioritas jelas, pindah ke input atau follow up.' },
+      ],
+    },
+  } satisfies Record<DowntimePanel, {
+    title: string;
+    subtitle: string;
+    next: string;
+    steps: Array<{ title: string; text: string }>;
+  }>), []);
+
   const formatAiChain = (result?: Pick<DowntimeWaParseResult, 'aiProvider' | 'aiProviderUsed'>) => {
     if (!result?.aiProvider && !result?.aiProviderUsed) return '-';
     const primary = (result.aiProvider || '').toLowerCase();
@@ -3212,9 +3280,27 @@ export default function Home() {
                 <div className="chart-head">
                   <div>
                     <h2>Gangguan Produksi · {downtimePanelLabels[downtimePanel]}</h2>
-                    <p>Workflow utama saling terhubung. Import tetap dipisah supaya aman saat backfill.</p>
+                    <p>{downtimePanelGuides[downtimePanel].subtitle}</p>
                   </div>
                 </div>
+
+                <section className="card pad soft-card downtime-guide-card">
+                  <div className="chart-head downtime-guide-head">
+                    <div>
+                      <h3>{downtimePanelGuides[downtimePanel].title}</h3>
+                      <p>{downtimePanelGuides[downtimePanel].next}</p>
+                    </div>
+                    <div className="onboarding-chip">Fokus saat ini</div>
+                  </div>
+                  <div className="downtime-guide-grid">
+                    {downtimePanelGuides[downtimePanel].steps.map((step) => (
+                      <div key={step.title} className="downtime-guide-step">
+                        <strong>{step.title}</strong>
+                        <span>{step.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
 
                 {downtimePanel === 'workflow' ? (
                   <>

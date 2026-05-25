@@ -133,6 +133,24 @@ function makeSparsePercentLabel(totalPoints: number, fill: string) {
 
 type TrendLocalFilters = { area: string; machine: string };
 
+const onboardingSteps = [
+  {
+    title: 'Pilih periode dan filter',
+    text: 'Mulai dari sidebar kiri: tanggal, area, mesin, line, atau kategori. Kalau butuh cepat, pakai preset Bulan Ini atau 7 Hari.',
+    tag: 'Langkah 1',
+  },
+  {
+    title: 'Baca KPI dan chart utama',
+    text: 'Angka target, pencapaian, dan reject menunjukkan kondisi terkini. Grafik di bawahnya dipakai untuk melihat pola harian dan top contributor.',
+    tag: 'Langkah 2',
+  },
+  {
+    title: 'Drill-down ke detail',
+    text: 'Klik bar atau tabel untuk lompat ke detail harian. Kalau mau kerja gangguan produksi, pindah ke menu Gangguan Produksi dari sidebar.',
+    tag: 'Langkah 3',
+  },
+] as const;
+
 export function OverviewSection({
   activeView,
   downtimePanel,
@@ -219,6 +237,28 @@ export function OverviewSection({
     <>
       {activeView === 'overview' ? (
       <>
+      <section className="card pad onboarding-card">
+        <div className="chart-head onboarding-head">
+          <div>
+            <h2>Mulai dari sini</h2>
+            <p>Kalau baru buka dashboard, ikuti tiga langkah ini dulu supaya langsung sampai ke insight yang dipakai kerja.</p>
+          </div>
+          <div className="onboarding-chip">3 langkah</div>
+        </div>
+        <div className="onboarding-grid">
+          {onboardingSteps.map((step) => (
+            <div key={step.title} className="onboarding-step">
+              <div className="onboarding-step-tag">{step.tag}</div>
+              <strong>{step.title}</strong>
+              <span>{step.text}</span>
+            </div>
+          ))}
+        </div>
+        <div className="onboarding-footnote">
+          Istilah singkat: <strong>Pencapaian</strong> = output dibanding target, <strong>Reject</strong> = produk yang tidak lolos, <strong>Downtime</strong> = mesin berhenti atau gangguan.
+        </div>
+      </section>
+
       <div className="kpis">
         <div className="card kpi"><div className="label"><PackageSearch size={16}/>Target</div><div className="value">{numberFmt.format(totalTargetPcs)}</div><div className="hint">Target sesuai filter aktif</div></div>
         <div className="card kpi"><div className="label"><PackageSearch size={16}/>Output OK (PCS)</div><div className="value">{numberFmt.format(kpis.totalOkQty)}</div><div className="hint">Output OK saja</div></div>
