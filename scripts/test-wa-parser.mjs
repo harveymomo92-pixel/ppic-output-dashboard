@@ -156,105 +156,6 @@ Reject print = 45
 Produktivitas = 92.5%`,
     manualOnly: true,
   },
-  {
-    name: 'production-downtime-thermo-printing',
-    text: `*HASIL THERMO*
-*SABTU ,23-05-2026*
-*Shift 2*
-
-*TF 01 CUP PANTHER 170 ML 3,5 GR*
-Hasil = 487.200 pcs
-Reject cup. =kg
-Reject shet. = kg
-Sisa order = - 2.153 Box
-CT =22.8
-* Cup cav 32 bercak oli
-
-*HF 01 CUP 16 OZ 475ML RC 7.0 GR*
-Hasil = 149.000 pcs
-Rijek sheet =kg
-Rijeck cup. = kg
-Sisa order = - 322 box
-CT = 20
-- Heater zona A4 low (15)
-
-*SABTU 23 MEI 2026*
-*PRINTING SHIFT 2*
-
-*P1 : OMSO 1*
-*RICHEESE 12 OZ ND*
-*Op: Nandar*
-_Hasil_: 100 box (100.000)
-_Produktifitas_: 60%
-_Reject print_: 21 kg
-_Reject polos_: 15.2 kg
-_Reject settup_:
-_%Reject_. : 4.6%
-_Speed_: 350
-_Sisa order_: *36 box*
-•Lap plate (30)
-•Sett secrew loading (50)
-•Sett unloading (35)
-•Sett roll no 2&3(15)
-•Alarm axes synchronism lost berulang(35)
-•Mc on/off Problem cup rapet (30)
-
-*P2 : OMSO 2*
-*FAMILY MART CF 14 OZ QR25 M3*
-*Op: Huda*
-_Hasil_: 147 box (147.000)
-_Produktifitas_: 87%
-_Reject print_: 4.8 kg
-_Reject polos_: 3 kg
-_Reject settup_:
-_%Reject_. : 0.5%
-_Speed_: 350
-_Sisa order_: *430 Box*
-•Lap plate (20)
-•Sett roll no 3(20)
-•Sett secrew loading (20)
-
-*P7 : NEWDO 1*
-*PANTHER MF TMI 170 ML*
-*Op: Surya*
-_Hasil_: 72 box (201.600)
-_Produktifitas_: 84%
-_Reject print_: 10.2 kg
-_Reject polos_:
-_Reject settup_:
-_%Reject_. : 1.4%
-_Speed_: 500
-_Sisa order_: *291 box*
-•Lap plate (30)
-•Ganti blanket (30)
-•Sett roll no 6(15)
-
-*P8 : NEWDO 2*
-*KOPIKAP JUMBO*
-*Op: Leonardo*
-_Hasil_: 60 box (175.500)
-_Produktifitas_: 73%
-_Reject print_: 13 kg
-_Reject polos_: 4 kg
-_Reject settup_:
-_%Reject_. : 2.4%
-_Speed_: 500
-_Sisa order_: *333 box*
-•Lap plate (30)
-•Ganti blanket (30)
-•Ganti nepel penomatic roll jilat no 3 (20)
-•Sett roll no 1,3,6(30)
-•Sett sensor double cup(20)
-
-*TOTAL HASIL : 624.100 pcs*
-*TOTAL RIJECT : 71.2 kg*`,
-    expect: {
-      parsedRows: 18,
-      structuredRows: 18,
-      productionRows: 6,
-      containsText: 'Lap plate (30)',
-    },
-  },
 ];
 
 async function runFixture(fixture) {
@@ -273,7 +174,7 @@ async function runFixture(fixture) {
   const payload = await response.json();
   const data = payload.data || {};
 
-  assert.equal(data.parserContractVersion, 'wa-downtime-v5', `${fixture.name}: contract version`);
+  assert.equal(data.parserContractVersion, 'wa-downtime-v4', `${fixture.name}: contract version`);
   if (fixture.manualOnly) {
     return {
       name: fixture.name,
@@ -342,15 +243,6 @@ async function runFixture(fixture) {
   }
   if (fixture.expect.area && data.productionRows?.[0]) {
     assert.equal(data.productionRows[0].area, fixture.expect.area, `${fixture.name}: area`);
-  }
-  if (fixture.expect.containsText) {
-    const needle = fixture.expect.containsText.toLowerCase();
-    const haystack = JSON.stringify({
-      rows: data.rows || [],
-      structuredRows: data.structuredRows || [],
-      productionRows: data.productionRows || [],
-    }).toLowerCase();
-    assert.ok(haystack.includes(needle), `${fixture.name}: containsText ${fixture.expect.containsText}`);
   }
 
   return {

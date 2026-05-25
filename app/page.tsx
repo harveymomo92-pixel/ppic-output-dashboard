@@ -1,14 +1,14 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, CalendarDays, Clock3, Database, Download, Factory, FileText, PackageSearch, Pencil, Plus, Save, Settings2, Trash2, Upload, X } from 'lucide-react';
 import { DashboardSidebar, type DashboardFilters } from '@/components/dashboard/dashboard-sidebar';
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { buildMachineSynonymPack, cleanText, decimalFmt, exportCsv, normalizeCode, normalizeMachineAliasText, numberFmt, toNumber } from '@/lib/dashboard';
 import { resolveDowntimeWaTiming as sharedResolveDowntimeWaTiming } from '@/lib/downtime-wa-timing';
 import type { ChartPoint, MasterEntityTarget } from '@/lib/types';
-import type { SettingsPanel as SettingsPanelType, SettingsData as SettingsDataType } from '@/components/dashboard/settings-section';
+import type { AiProviderKey, ApiKeyCheckResult, SettingsPanel as SettingsPanelType, SettingsData as SettingsDataType } from '@/components/dashboard/settings-section';
 
 const SettingsSection = dynamic(() => import('@/components/dashboard/settings-section').then((mod) => mod.SettingsSection), { ssr: false });
 const OverviewDashboardSection: any = dynamic(() => import('@/components/dashboard/overview-section').then((mod) => mod.OverviewSection), { ssr: false });
@@ -456,6 +456,12 @@ type DowntimeEventForm = {
   linked_signal_type: string;
 };
 
+type DowntimeEventDraft = {
+  ui_id: string;
+  editingId: string | null;
+  form: DowntimeEventForm;
+};
+
 type DowntimeEventFilters = {
   category: '' | DowntimeEventCategory;
   shift: string;
@@ -482,7 +488,7 @@ const emptyTrendLocalFilters: TrendLocalFilters = { area: '', machine: '' };
 const emptyDowntimeEventFilters: DowntimeEventFilters = { category: '', shift: '', status: '' };
 const emptyDowntimeEventForm: DowntimeEventForm = {
   event_date: '',
-  shift_code: '',
+  shift_code: 'Shift 1',
   area: '',
   machine: '',
   line: '',
@@ -508,6 +514,11 @@ const downtimeCategories: Array<{ value: DowntimeEventCategory; label: string }>
   { value: 'cleaning', label: 'Cleaning' },
   { value: 'minor-stop', label: 'Minor stop' },
   { value: 'other', label: 'Lainnya' },
+];
+const downtimeShiftChoices: Array<{ value: string; label: string }> = [
+  { value: 'Shift 1', label: 'Shift 1 : 07:00-15:00' },
+  { value: 'Shift 2', label: 'Shift 2 : 15:00-23:00' },
+  { value: 'Shift 3', label: 'Shift 3 : 23:00-07:00' },
 ];
 const downtimeStatuses: Array<{ value: DowntimeEventStatus; label: string }> = [
   { value: 'open', label: 'Open' },
@@ -537,6 +548,15 @@ function getJakartaToday() {
   }).formatToParts(new Date());
   const pick = (type: string) => parts.find((part) => part.type === type)?.value ?? '00';
   return `${pick('year')}-${pick('month')}-${pick('day')}`;
+}
+
+function getJakartaNowTime() {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Jakarta',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date());
 }
 
 function getLastDayOfMonth(month: string) {
@@ -670,6 +690,71 @@ function formFromDowntimeEvent(row: DowntimeEventRow): DowntimeEventForm {
     estimated_loss_output: row.estimated_loss_output ? String(row.estimated_loss_output) : '',
     linked_signal_type: row.linked_signal_type,
   };
+}
+
+function createDowntimeEventDraft(form: Partial<DowntimeEventForm> = {}, editingId: string | null = null): DowntimeEventDraft {
+  const nowTime = getJakartaNowTime();
+  return {
+    ui_id: `downtime-draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    editingId,
+    form: {
+      ...emptyDowntimeEventForm,
+      start_time: nowTime,
+      end_time: nowTime,
+      ...form,
+    },
+  };
+}
+
+function draftFromDowntimeEvent(row: DowntimeEventRow): DowntimeEventDraft {
+  return {
+    ui_id: `downtime-draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    editingId: row.id,
+    form: formFromDowntimeEvent(row),
+  };
+}
+
+type SearchableOption = {
+  value: string;
+  label: string;
+};
+
+type SelectFieldProps = {
+  label: string;
+  value: string;
+  options: SearchableOption[];
+  onChange: (value: string) => void;
+  className?: string;
+  placeholder?: string;
+  allowEmpty?: boolean;
+};
+
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+  className = '',
+  placeholder,
+  allowEmpty = false,
+}: SelectFieldProps) {
+  const inputId = `downtime-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  return (
+    <label className={`downtime-field downtime-select-field ${className}`}>
+      <span>{label}</span>
+      <select
+        id={inputId}
+        className="detail-table-select downtime-select"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {allowEmpty ? <option value="">{placeholder || `Pilih ${label.toLowerCase()}`}</option> : null}
+        {options.map((option) => (
+          <option key={option.value || option.label} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
 function aggregateCompareRows(rows: TargetPerformanceRow[]) {
@@ -1250,7 +1335,10 @@ export default function Home() {
   const [savedFiltersLoaded, setSavedFiltersLoaded] = useState(false);
   const [downtimeEvents, setDowntimeEvents] = useState<DowntimeEventRow[]>([]);
   const [downtimeEventFilters, setDowntimeEventFilters] = useState<DowntimeEventFilters>(emptyDowntimeEventFilters);
-  const [downtimeEventForm, setDowntimeEventForm] = useState<DowntimeEventForm>(emptyDowntimeEventForm);
+  const downtimeEventDefaultDate = filters.dateTo || filters.dateFrom || getJakartaToday();
+  const [downtimeEventDrafts, setDowntimeEventDrafts] = useState<DowntimeEventDraft[]>(() => [
+    createDowntimeEventDraft({ event_date: downtimeEventDefaultDate }),
+  ]);
   const [editingDowntimeEventId, setEditingDowntimeEventId] = useState<string | null>(null);
   const [savingDowntimeEvent, setSavingDowntimeEvent] = useState(false);
   const [downtimeImportMode, setDowntimeImportMode] = useState<'append' | 'replace'>('append');
@@ -1262,7 +1350,7 @@ export default function Home() {
   const [downtimeWaText, setDowntimeWaText] = useState('');
   const [downtimeWaViewMode, setDowntimeWaViewMode] = useState<'full' | 'output-only'>('output-only');
   const [downtimeWaParserMode, setDowntimeWaParserMode] = useState<'rules' | 'ai' | 'hybrid'>('hybrid');
-  const [downtimeWaAiProvider, setDowntimeWaAiProvider] = useState<'gemini' | 'openai'>('gemini');
+  const [downtimeWaAiProvider, setDowntimeWaAiProvider] = useState<'gemini' | 'openai' | 'groq' | 'mistral'>('gemini');
   const [downtimeWaParsing, setDowntimeWaParsing] = useState(false);
   const [downtimeWaSaving, setDowntimeWaSaving] = useState(false);
   const [downtimeWaResult, setDowntimeWaResult] = useState<DowntimeWaParseResult | null>(null);
@@ -1282,7 +1370,21 @@ export default function Home() {
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsData, setSettingsData] = useState<AppSettingsResponse | null>(null);
   const [settingsDraft, setSettingsDraft] = useState<Record<string, string>>({});
+  const [checkingApiKey, setCheckingApiKey] = useState<AiProviderKey | null>(null);
+  const [apiKeyCheckResults, setApiKeyCheckResults] = useState<Partial<Record<AiProviderKey, ApiKeyCheckResult>>>({});
   const [syncError, setSyncError] = useState<string | null>(null);
+  const downtimeAreaOptions = useMemo(
+    () => dashboard.options.areas.slice().sort((a, b) => a.localeCompare(b)),
+    [dashboard.options.areas],
+  );
+  const downtimeMachineOptions = useMemo(
+    () => dashboard.options.machines.slice().sort((a, b) => a.localeCompare(b)),
+    [dashboard.options.machines],
+  );
+  const mergeOptions = (currentValue: string, options: string[]) => {
+    const values = [currentValue, ...options].map((item) => cleanText(item)).filter(Boolean);
+    return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b));
+  };
   const downtimePanelLabels = useMemo(() => ({
     workflow: 'Ringkasan',
     import: 'Import Backfill',
@@ -1296,8 +1398,17 @@ export default function Home() {
     if (!result?.aiProvider && !result?.aiProviderUsed) return '-';
     const primary = (result.aiProvider || '').toLowerCase();
     const used = (result.aiProviderUsed || '').toLowerCase();
-    const primaryLabel = primary === 'gemini' ? 'Gemini' : primary === 'openai' ? 'OpenAI' : '';
-    const usedLabel = used === 'gemini' ? 'Gemini' : used === 'openai' ? 'OpenAI' : '';
+    const labelFor = (value: string) => value === 'gemini'
+      ? 'Gemini'
+      : value === 'openai'
+        ? 'OpenAI'
+        : value === 'groq'
+          ? 'Groq'
+          : value === 'mistral'
+            ? 'Mistral'
+            : '';
+    const primaryLabel = labelFor(primary);
+    const usedLabel = labelFor(used);
     if (primaryLabel && usedLabel && primaryLabel !== usedLabel) return `${primaryLabel} → ${usedLabel}`;
     return usedLabel || primaryLabel || '-';
   };
@@ -2003,17 +2114,17 @@ export default function Home() {
         if (!response.ok) throw new Error('Gagal memuat settings');
         return response.json() as Promise<AppSettingsResponse>;
       })
-      .then((payload) => {
-        if (cancelled) return;
-        setSettingsData(payload);
-        const draft: Record<string, string> = {};
-        for (const [key, field] of Object.entries(payload.settings || {})) {
-          if (!field.set) continue;
-          if (['GEMINI_API_KEY', 'OPENAI_API_KEY', 'PPIC_ODATA_PASSWORD', 'PPIC_ODATA_TOKEN'].includes(key)) continue;
-          draft[key] = field.value || '';
-        }
-        setSettingsDraft((current) => ({ ...draft, ...current }));
-      })
+        .then((payload) => {
+          if (cancelled) return;
+          setSettingsData(payload);
+          const draft: Record<string, string> = {};
+          for (const [key, field] of Object.entries(payload.settings || {})) {
+            if (!field.set) continue;
+            if (['GEMINI_API_KEY', 'OPENAI_API_KEY', 'GROQ_API_KEY', 'MISTRAL_API_KEY', 'PPIC_ODATA_PASSWORD', 'PPIC_ODATA_TOKEN'].includes(key)) continue;
+            draft[key] = field.value || '';
+          }
+          setSettingsDraft((current) => ({ ...draft, ...current }));
+        })
       .catch((error) => {
         if (!cancelled) setSettingsError(error instanceof Error ? error.message : 'Gagal memuat settings');
       })
@@ -2204,7 +2315,7 @@ export default function Home() {
   }), [downtimeSignals]);
   const downtimeLossChartHeight = useMemo(() => Math.max(320, downtimeLossChartRows.length * 38 + 72), [downtimeLossChartRows.length]);
 
-  const downtimeShiftOptions = useMemo(
+  const downtimeEventShiftOptions = useMemo(
     () => Array.from(new Set(downtimeEvents.map((row) => cleanText(row.shift_code, '')).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
     [downtimeEvents],
   );
@@ -2576,10 +2687,13 @@ export default function Home() {
 
 
   useEffect(() => {
-    if (!downtimeEventForm.event_date && activeView === 'downtime') {
-      setDowntimeEventForm((current) => ({ ...current, event_date: filters.dateTo || filters.dateFrom || getJakartaToday() }));
-    }
-  }, [activeView, downtimeEventForm.event_date, filters.dateFrom, filters.dateTo]);
+    if (activeView !== 'downtime') return;
+    setDowntimeEventDrafts((current) => {
+      if (!current.length) return [createDowntimeEventDraft({ event_date: downtimeEventDefaultDate })];
+      if (current[0].form.event_date) return current;
+      return current.map((draft, index) => index === 0 ? { ...draft, form: { ...draft.form, event_date: downtimeEventDefaultDate } } : draft);
+    });
+  }, [activeView, downtimeEventDefaultDate]);
 
   const resetMasterForm = () => {
     setEditingMasterId(null);
@@ -2635,43 +2749,97 @@ export default function Home() {
 
   const resetDowntimeEventForm = () => {
     setEditingDowntimeEventId(null);
-    setDowntimeEventForm({ ...emptyDowntimeEventForm, event_date: filters.dateTo || filters.dateFrom || getJakartaToday() });
+    setDowntimeEventDrafts([createDowntimeEventDraft({ event_date: downtimeEventDefaultDate })]);
+  };
+
+  const updateDowntimeDraft = (ui_id: string, patch: Partial<DowntimeEventForm>) => {
+    setDowntimeEventDrafts((current) => current.map((item) => item.ui_id === ui_id ? { ...item, form: { ...item.form, ...patch } } : item));
   };
 
   const pickDowntimeSignal = (row: DowntimeSignalRow) => {
     setDowntimePanel('input');
-    setDowntimeEventForm((current) => ({
-      ...current,
-      event_date: current.event_date || filters.dateTo || filters.dateFrom || getJakartaToday(),
-      area: row.area,
-      machine: row.machine,
-      line: row.machine,
-      estimated_loss_output: row.estimatedLossQty ? String(Math.round(row.estimatedLossQty)) : current.estimated_loss_output,
-      linked_signal_type: row.signalType,
-      category: row.signalType === 'quality-loss' ? 'qc-hold' : row.signalType === 'speed-loss' ? 'minor-stop' : row.signalType === 'no-runtime' ? 'machine-trouble' : current.category,
-      root_cause: current.root_cause || row.note,
-    }));
+    setDowntimeEventDrafts((current) => [{
+      ui_id: createDowntimeEventDraft().ui_id,
+      editingId: null,
+      form: createDowntimeEventDraft({
+        event_date: current[0]?.form.event_date || downtimeEventDefaultDate,
+        area: row.area,
+        machine: row.machine,
+        line: row.machine,
+        estimated_loss_output: row.estimatedLossQty ? String(Math.round(row.estimatedLossQty)) : '',
+        linked_signal_type: row.signalType,
+        category: row.signalType === 'quality-loss' ? 'qc-hold' : row.signalType === 'speed-loss' ? 'minor-stop' : row.signalType === 'no-runtime' ? 'machine-trouble' : 'machine-trouble',
+        root_cause: row.note,
+      }).form,
+    }]);
     setEditingDowntimeEventId(null);
     scrollToSection('downtime-panel-content');
   };
 
-  const saveDowntimeEvent = async () => {
-    if (!downtimeEventForm.event_date || !downtimeEventForm.machine || !downtimeEventForm.start_time || !downtimeEventForm.end_time) {
-      window.alert('Tanggal, mesin, start, dan end downtime wajib diisi.');
+  const addDowntimeEventDraft = () => {
+    setDowntimeEventDrafts((current) => {
+      const previous = current[current.length - 1]?.form ?? current[0]?.form ?? createDowntimeEventDraft({ event_date: downtimeEventDefaultDate }).form;
+      return [
+        ...current,
+        createDowntimeEventDraft({
+          event_date: previous.event_date || downtimeEventDefaultDate,
+          start_time: previous.start_time || getJakartaNowTime(),
+          end_time: previous.end_time || getJakartaNowTime(),
+          shift_code: previous.shift_code || 'Shift 1',
+          area: previous.area,
+          category: previous.category,
+        }),
+      ];
+    });
+  };
+
+  const removeDowntimeEventDraft = (ui_id: string) => {
+    setDowntimeEventDrafts((current) => {
+      if (current.length <= 1) return current;
+      const removed = current.find((draft) => draft.ui_id === ui_id);
+      const next = current.filter((draft) => draft.ui_id !== ui_id);
+      if (removed?.editingId && removed.editingId === editingDowntimeEventId) {
+        setEditingDowntimeEventId(null);
+      }
+      return next.length ? next : [createDowntimeEventDraft({ event_date: downtimeEventDefaultDate })];
+    });
+  };
+
+  const saveDowntimeEvents = async () => {
+    if (!downtimeEventDrafts.length) {
+      window.alert('Minimal ada 1 card event downtime.');
       return;
     }
     setSavingDowntimeEvent(true);
     try {
-      const duration = downtimeEventForm.duration_minutes !== '' && downtimeEventForm.duration_minutes !== null && downtimeEventForm.duration_minutes !== undefined
-        ? String(downtimeEventForm.duration_minutes)
-        : String(minutesBetween(downtimeEventForm.event_date, downtimeEventForm.start_time, downtimeEventForm.end_time));
-      const endpoint = editingDowntimeEventId ? `/api/downtime-events/${editingDowntimeEventId}` : '/api/downtime-events';
-      const response = await fetch(endpoint, {
-        method: editingDowntimeEventId ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...downtimeEventForm, duration_minutes: duration }),
-      });
-      if (!response.ok) throw new Error('Gagal menyimpan downtime event');
+      for (let index = 0; index < downtimeEventDrafts.length; index += 1) {
+        const draft = downtimeEventDrafts[index];
+        const form = draft.form;
+        const normalizedShiftCode = form.shift_code || 'Shift 1';
+        const shiftIsValid = downtimeShiftChoices.some((option) => option.value === normalizedShiftCode);
+        if (!form.event_date || !shiftIsValid || !form.area || !form.machine || !form.start_time || !form.end_time) {
+          window.alert(`Card ${index + 1}: tanggal, shift, area, mesin, start, dan end downtime wajib diisi.`);
+          return;
+        }
+      }
+      for (const draft of downtimeEventDrafts) {
+        const form = draft.form;
+        const normalizedShiftCode = form.shift_code || 'Shift 1';
+        const normalizedForm = {
+          ...form,
+          shift_code: normalizedShiftCode,
+        };
+        const duration = normalizedForm.duration_minutes !== '' && normalizedForm.duration_minutes !== null && normalizedForm.duration_minutes !== undefined
+          ? String(form.duration_minutes)
+          : String(minutesBetween(normalizedForm.event_date, normalizedForm.start_time, normalizedForm.end_time));
+        const endpoint = draft.editingId ? `/api/downtime-events/${draft.editingId}` : '/api/downtime-events';
+        const response = await fetch(endpoint, {
+          method: draft.editingId ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...normalizedForm, duration_minutes: duration }),
+        });
+        if (!response.ok) throw new Error('Gagal menyimpan downtime event');
+      }
       await loadDowntimeEvents(filters, downtimeEventFilters);
       resetDowntimeEventForm();
     } catch (error) {
@@ -2685,7 +2853,7 @@ export default function Home() {
   const editDowntimeEvent = (row: DowntimeEventRow) => {
     setDowntimePanel('input');
     setEditingDowntimeEventId(row.id);
-    setDowntimeEventForm(formFromDowntimeEvent(row));
+    setDowntimeEventDrafts([draftFromDowntimeEvent(row)]);
     scrollToSection('downtime-panel-content');
   };
 
@@ -2855,6 +3023,44 @@ export default function Home() {
     }
   };
   const exportMasterTargets = () => exportCsv(masterTargets, 'master-entity-target-produksi.csv');
+
+  const aiProviderCheckConfig: Record<AiProviderKey, { label: string; apiKeyKey: string; modelKey: string; baseUrlKey?: string }> = {
+    gemini: { label: 'Gemini', apiKeyKey: 'GEMINI_API_KEY', modelKey: 'GEMINI_MODEL' },
+    openai: { label: 'OpenAI', apiKeyKey: 'OPENAI_API_KEY', modelKey: 'WA_PARSER_AI_MODEL', baseUrlKey: 'OPENAI_BASE_URL' },
+    groq: { label: 'Groq', apiKeyKey: 'GROQ_API_KEY', modelKey: 'GROQ_MODEL' },
+    mistral: { label: 'Mistral', apiKeyKey: 'MISTRAL_API_KEY', modelKey: 'MISTRAL_MODEL' },
+  };
+
+  const checkApiKey = async (provider: AiProviderKey) => {
+    const config = aiProviderCheckConfig[provider];
+    const hasApiKeyDraft = Object.prototype.hasOwnProperty.call(settingsDraft, config.apiKeyKey);
+    const hasModelDraft = Object.prototype.hasOwnProperty.call(settingsDraft, config.modelKey);
+    const hasBaseUrlDraft = config.baseUrlKey ? Object.prototype.hasOwnProperty.call(settingsDraft, config.baseUrlKey) : false;
+    const apiKey = hasApiKeyDraft ? settingsDraft[config.apiKeyKey] : undefined;
+    const model = hasModelDraft ? settingsDraft[config.modelKey] : undefined;
+    const baseUrl = config.baseUrlKey && hasBaseUrlDraft ? settingsDraft[config.baseUrlKey] : undefined;
+    setCheckingApiKey(provider);
+    setSettingsError(null);
+    try {
+      const response = await fetch('/api/settings/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider,
+          ...(hasApiKeyDraft ? { apiKey } : {}),
+          ...(hasModelDraft ? { model } : {}),
+          ...(config.baseUrlKey && hasBaseUrlDraft ? { baseUrl } : {}),
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Gagal cek API key');
+      setApiKeyCheckResults((current) => ({ ...current, [provider]: payload as ApiKeyCheckResult }));
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : `Gagal cek API key ${config.label}`);
+    } finally {
+      setCheckingApiKey(null);
+    }
+  };
 
   return (
     <SidebarProvider>
@@ -3052,7 +3258,12 @@ export default function Home() {
                       <div className="detail-table-toolbar-group">
                         <select className="detail-table-select" value={downtimeWaViewMode} onChange={(event) => setDowntimeWaViewMode(event.target.value as 'full' | 'output-only')}><option value="output-only">Output Saja</option><option value="full">Full + bisa save</option></select>
                         <select className="detail-table-select" value={downtimeWaParserMode} onChange={(event) => setDowntimeWaParserMode(event.target.value as 'rules' | 'ai' | 'hybrid')}><option value="hybrid">Hybrid AI-first</option><option value="rules">Rules</option><option value="ai">AI</option></select>
-                        <select className="detail-table-select" value={downtimeWaAiProvider} onChange={(event) => setDowntimeWaAiProvider(event.target.value as 'gemini' | 'openai')}><option value="gemini">Gemini</option><option value="openai">OpenAI</option></select>
+                        <select className="detail-table-select" value={downtimeWaAiProvider} onChange={(event) => setDowntimeWaAiProvider(event.target.value as 'gemini' | 'openai' | 'groq' | 'mistral')}>
+                          <option value="gemini">Gemini</option>
+                          <option value="openai">OpenAI</option>
+                          <option value="groq">Groq</option>
+                          <option value="mistral">Mistral</option>
+                        </select>
                       </div>
                       <textarea className="downtime-wa-textarea" value={downtimeWaText} onChange={(event) => setDowntimeWaText(event.target.value)} placeholder="Paste laporan WhatsApp di sini..." rows={8} />
                       <div className="detail-table-toolbar-group">
@@ -3281,24 +3492,92 @@ export default function Home() {
                 ) : null}
 
                 {downtimePanel === 'input' ? (
-                  <div className="downtime-form-grid">
-                    <label>Tanggal<input className="detail-table-input" type="date" value={downtimeEventForm.event_date} onChange={(e) => setDowntimeEventForm((c) => ({ ...c, event_date: e.target.value }))} /></label>
-                    <label>Shift<input className="detail-table-input" value={downtimeEventForm.shift_code} onChange={(e) => setDowntimeEventForm((c) => ({ ...c, shift_code: e.target.value }))} /></label>
-                    <label>Area<input className="detail-table-input" value={downtimeEventForm.area} onChange={(e) => setDowntimeEventForm((c) => ({ ...c, area: e.target.value }))} /></label>
-                    <label>Mesin<input className="detail-table-input" value={downtimeEventForm.machine} onChange={(e) => setDowntimeEventForm((c) => ({ ...c, machine: e.target.value }))} /></label>
-                    <label>Start<input className="detail-table-input" type="time" value={downtimeEventForm.start_time} onChange={(e) => setDowntimeEventForm((c) => ({ ...c, start_time: e.target.value }))} /></label>
-                    <label>End<input className="detail-table-input" type="time" value={downtimeEventForm.end_time} onChange={(e) => setDowntimeEventForm((c) => ({ ...c, end_time: e.target.value }))} /></label>
-                    <label>Kategori<select className="detail-table-select" value={downtimeEventForm.category} onChange={(e) => setDowntimeEventForm((c) => ({ ...c, category: e.target.value as DowntimeEventCategory }))}>{downtimeCategories.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
-                    <label>Status<select className="detail-table-select" value={downtimeEventForm.status} onChange={(e) => setDowntimeEventForm((c) => ({ ...c, status: e.target.value as DowntimeEventStatus }))}>{downtimeStatuses.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
-                    <label className="span-2">Penyebab<textarea className="detail-table-input" value={downtimeEventForm.root_cause} onChange={(e) => setDowntimeEventForm((c) => ({ ...c, root_cause: e.target.value }))} /></label>
-                    <label className="span-2">Tindakan<textarea className="detail-table-input" value={downtimeEventForm.action_taken} onChange={(e) => setDowntimeEventForm((c) => ({ ...c, action_taken: e.target.value }))} /></label>
-                    <div className="span-2 detail-table-toolbar-group"><button className="btn primary" type="button" onClick={saveDowntimeEvent} disabled={savingDowntimeEvent}>{savingDowntimeEvent ? 'Saving...' : editingDowntimeEventId ? 'Update Event' : 'Save Event'}</button><button className="btn secondary" type="button" onClick={resetDowntimeEventForm}>Reset</button></div>
+                  <div className="downtime-input-stack">
+                    <div className="detail-table-toolbar-group">
+                      <button className="btn secondary" type="button" onClick={addDowntimeEventDraft}>+ Tambah Card</button>
+                      <button className="btn secondary" type="button" onClick={resetDowntimeEventForm}>Reset All</button>
+                    </div>
+                    {downtimeEventDrafts.map((draft, index) => (
+                      <section key={draft.ui_id} className="card pad soft-card downtime-input-card">
+                        <div className="chart-head downtime-input-card-head">
+                          <div>
+                            <h3>{draft.editingId ? 'Edit Event' : `Event ${index + 1}`}</h3>
+                            <p>{draft.editingId ? `Memperbarui event downtime yang dipilih.` : 'Isi satu card untuk satu event. Tombol + akan menambah card baru di bawahnya.'}</p>
+                          </div>
+                          <div className="detail-table-toolbar-group">
+                            {downtimeEventDrafts.length > 1 ? <button className="btn secondary table-mini-btn danger" type="button" onClick={() => removeDowntimeEventDraft(draft.ui_id)}>Hapus</button> : null}
+                          </div>
+                        </div>
+                        <div className="downtime-form-grid downtime-form-grid-compact">
+                          <div className="downtime-form-row">
+                            <label className="downtime-field">
+                              <span>Tanggal</span>
+                              <input className="detail-table-input" type="date" value={draft.form.event_date} onChange={(e) => setDowntimeEventDrafts((current) => current.map((item) => item.ui_id === draft.ui_id ? { ...item, form: { ...item.form, event_date: e.target.value } } : item))} />
+                            </label>
+                            <SelectField
+                              label="Shift"
+                              value={draft.form.shift_code}
+                              options={downtimeShiftChoices}
+                              onChange={(shift_code) => updateDowntimeDraft(draft.ui_id, { shift_code })}
+                            />
+                            <SelectField
+                              label="Area"
+                              value={draft.form.area}
+                              options={downtimeAreaOptions.map((area) => ({ value: area, label: area }))}
+                              placeholder="Pilih area"
+                              allowEmpty
+                              onChange={(area) => updateDowntimeDraft(draft.ui_id, { area })}
+                            />
+                            <SelectField
+                              label="Mesin"
+                              value={draft.form.machine}
+                              options={downtimeMachineOptions.map((machine) => ({ value: machine, label: machine }))}
+                              placeholder="Pilih mesin"
+                              allowEmpty
+                              onChange={(machine) => updateDowntimeDraft(draft.ui_id, { machine })}
+                            />
+                          </div>
+                          <div className="downtime-form-row">
+                            <label className="downtime-field">
+                              <span>Start</span>
+                              <input className="detail-table-input" type="time" value={draft.form.start_time} onChange={(e) => updateDowntimeDraft(draft.ui_id, { start_time: e.target.value })} />
+                            </label>
+                            <label className="downtime-field">
+                              <span>End</span>
+                              <input className="detail-table-input" type="time" value={draft.form.end_time} onChange={(e) => updateDowntimeDraft(draft.ui_id, { end_time: e.target.value })} />
+                            </label>
+                            <label className="downtime-field">
+                              <span>Kategori</span>
+                              <select className="detail-table-select" value={draft.form.category} onChange={(e) => updateDowntimeDraft(draft.ui_id, { category: e.target.value as DowntimeEventCategory })}>{downtimeCategories.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>
+                            </label>
+                            <label className="downtime-field">
+                              <span>Status</span>
+                              <select className="detail-table-select" value={draft.form.status} onChange={(e) => updateDowntimeDraft(draft.ui_id, { status: e.target.value as DowntimeEventStatus })}>{downtimeStatuses.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>
+                            </label>
+                          </div>
+                          <label className="downtime-field downtime-field-wide">
+                            <span>Penyebab</span>
+                            <textarea className="detail-table-input downtime-textarea" value={draft.form.root_cause} onChange={(e) => updateDowntimeDraft(draft.ui_id, { root_cause: e.target.value })} />
+                          </label>
+                          <label className="downtime-field downtime-field-wide">
+                            <span>Tindakan</span>
+                            <textarea className="detail-table-input downtime-textarea" value={draft.form.action_taken} onChange={(e) => updateDowntimeDraft(draft.ui_id, { action_taken: e.target.value })} />
+                          </label>
+                          <div className="span-2 detail-table-toolbar-group">
+                            <span className="muted">Card {index + 1} {draft.editingId ? '· edit mode' : ''}</span>
+                          </div>
+                        </div>
+                      </section>
+                    ))}
+                    <div className="detail-table-toolbar-group">
+                      <button className="btn primary" type="button" onClick={saveDowntimeEvents} disabled={savingDowntimeEvent}>{savingDowntimeEvent ? 'Saving...' : 'Save Events'}</button>
+                    </div>
                   </div>
                 ) : null}
 
                 {(downtimePanel === 'followup' || downtimePanel === 'table') ? (
                   <>
-                    <DataTableToolbar totalCount={downtimePanel === 'followup' ? downtimeFollowUpRows.length : downtimeEvents.length} hasActiveFilters={Boolean(downtimeEventFilters.category || downtimeEventFilters.shift || downtimeEventFilters.status)} onReset={() => setDowntimeEventFilters(emptyDowntimeEventFilters)} left={<><TableFilterSelect value={downtimeEventFilters.category} onChange={(category) => setDowntimeEventFilters((c) => ({ ...c, category: category as DowntimeEventFilters['category'] }))} options={[{ value: '', label: 'Semua kategori' }, ...downtimeCategories]} /><TableFilterSelect value={downtimeEventFilters.status} onChange={(status) => setDowntimeEventFilters((c) => ({ ...c, status: status as DowntimeEventFilters['status'] }))} options={[{ value: '', label: 'Semua status' }, ...downtimeStatuses]} /><TableFilterSelect value={downtimeEventFilters.shift} onChange={(shift) => setDowntimeEventFilters((c) => ({ ...c, shift }))} options={[{ value: '', label: 'Semua shift' }, ...downtimeShiftOptions.map((shift) => ({ value: shift, label: shift }))]} /></>} />
+                    <DataTableToolbar totalCount={downtimePanel === 'followup' ? downtimeFollowUpRows.length : downtimeEvents.length} hasActiveFilters={Boolean(downtimeEventFilters.category || downtimeEventFilters.shift || downtimeEventFilters.status)} onReset={() => setDowntimeEventFilters(emptyDowntimeEventFilters)} left={<><TableFilterSelect value={downtimeEventFilters.category} onChange={(category) => setDowntimeEventFilters((c) => ({ ...c, category: category as DowntimeEventFilters['category'] }))} options={[{ value: '', label: 'Semua kategori' }, ...downtimeCategories]} /><TableFilterSelect value={downtimeEventFilters.status} onChange={(status) => setDowntimeEventFilters((c) => ({ ...c, status: status as DowntimeEventFilters['status'] }))} options={[{ value: '', label: 'Semua status' }, ...downtimeStatuses]} /><TableFilterSelect value={downtimeEventFilters.shift} onChange={(shift) => setDowntimeEventFilters((c) => ({ ...c, shift }))} options={[{ value: '', label: 'Semua shift' }, ...downtimeEventShiftOptions.map((shift) => ({ value: shift, label: shift }))]} /></>} />
                     <div className="detail-table-scroll"><table className="detail-table downtime-event-table"><thead><tr><th>Tanggal & Shift</th><th>Mesin & Area</th><th>Waktu</th><th className="num">Durasi</th><th>Kategori</th><th>Status</th><th>Penyebab / Tindakan</th><th className="num">Loss</th><th>PIC</th><th>Aksi</th></tr></thead><tbody>{(downtimePanel === 'followup' ? downtimeFollowUpRows.map((x) => x.event) : downtimeEvents).length ? (downtimePanel === 'followup' ? downtimeFollowUpRows.map((x) => x.event) : downtimeEvents).map((row) => <tr key={row.id} className={`downtime-row-${row.status} ${!cleanText(row.root_cause, '') || !cleanText(row.action_taken, '') ? 'is-alert' : ''}`}><td><strong>{row.event_date}</strong><br/><span className="muted">Shift {row.shift_code || '-'}</span></td><td><div className="machine-product-cell"><strong>{row.machine}</strong><span>{row.area || '-'}{row.linked_signal_type ? ` · ${downtimeSignalLabel(row.linked_signal_type as DowntimeSignalType)}` : ''}</span></div></td><td>{row.start_time} - {row.end_time}</td><td className="num">{decimalFmt.format(row.duration_minutes)} menit</td><td>{row.category}</td><td><span className={`status-badge ${row.status}`}>{row.status}</span></td><td><strong>{row.root_cause || 'Penyebab belum diisi'}</strong><br/><span className="muted">{row.action_taken || 'Tindakan belum diisi'}</span></td><td className="num">{row.estimated_loss_output ? numberFmt.format(row.estimated_loss_output) : '-'}</td><td>{row.pic || '-'}</td><td><div className="table-actions"><button className="btn secondary table-mini-btn" type="button" onClick={() => editDowntimeEvent(row)}>Edit</button><button className="btn secondary table-mini-btn danger" type="button" onClick={() => deleteDowntimeEvent(row.id)}>Hapus</button></div></td></tr>) : <tr><td colSpan={10}><div className="empty guided-empty table-empty"><strong>{downtimePanel === 'followup' ? 'Belum ada tindak lanjut' : 'Belum ada event gangguan'}</strong><p>{downtimePanel === 'followup' ? 'Event yang butuh penyebab/tindakan akan muncul di sini.' : 'Klik Input Event untuk mencatat gangguan produksi pertama.'}</p></div></td></tr>}</tbody></table></div>
                   </>
                 ) : null}
@@ -3434,13 +3713,16 @@ export default function Home() {
                 settingsSaving={settingsSaving}
                 settingsError={settingsError}
                 syncError={syncError}
-                settingsData={settingsData}
-                settingsDraft={settingsDraft}
-                setSettingsDraft={setSettingsDraft}
-                onSave={saveSettings}
-                onSync={syncData}
-                syncing={syncing}
-                activeView={activeView}
+              settingsData={settingsData}
+              settingsDraft={settingsDraft}
+              setSettingsDraft={setSettingsDraft}
+              onSave={saveSettings}
+              onCheckApiKey={checkApiKey}
+              checkingApiKey={checkingApiKey}
+              apiKeyCheckResults={apiKeyCheckResults}
+              onSync={syncData}
+              syncing={syncing}
+              activeView={activeView}
                 downtimeEventsCount={downtimeEvents.length}
                 latestSyncStatus={dashboard.syncStatus?.status || '-'}
               />

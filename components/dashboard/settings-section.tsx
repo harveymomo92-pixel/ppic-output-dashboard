@@ -1,10 +1,23 @@
 'use client';
 
-import { Clock3, Database, Download, Save, Settings2 } from 'lucide-react';
+import { CheckCircle2, Clock3, Database, Download, Loader2, Save, Settings2 } from 'lucide-react';
 import { numberFmt } from '@/lib/dashboard';
 
 export type SettingsPanel = 'ai' | 'odata' | 'logs' | 'system';
 export type SettingsField = { value: string; set: boolean };
+export type AiProviderKey = 'gemini' | 'openai' | 'groq' | 'mistral';
+export type ApiKeyCheckResult = {
+  ready: boolean;
+  keyValid: boolean;
+  modelValid: boolean | null;
+  message: string;
+  details: string;
+  checkedAt: string;
+  endpoint: string;
+  source: 'draft' | 'saved';
+  model: string;
+  baseUrl: string;
+};
 export type SettingsData = {
   settings: Record<string, SettingsField>;
   syncHistory: Array<{ id: number; source: string; started_at: string; finished_at: string | null; row_count: number; status: string; message: string | null }>;
@@ -21,6 +34,9 @@ type Props = {
   settingsDraft: Record<string, string>;
   setSettingsDraft: (updater: (current: Record<string, string>) => Record<string, string>) => void;
   onSave: () => void;
+  onCheckApiKey: (provider: AiProviderKey) => void;
+  checkingApiKey: AiProviderKey | null;
+  apiKeyCheckResults: Partial<Record<AiProviderKey, ApiKeyCheckResult>>;
   onSync: () => void;
   syncing: boolean;
   activeView: string;
@@ -28,11 +44,38 @@ type Props = {
   latestSyncStatus?: string | null;
 };
 
-const secretLike = new Set(['GEMINI_API_KEY', 'OPENAI_API_KEY', 'PPIC_ODATA_PASSWORD', 'PPIC_ODATA_TOKEN']);
-
-function FieldList({ items, settingsData, settingsDraft, setSettingsDraft }: { items: Array<[string, string, boolean]>; settingsData: SettingsData | null; settingsDraft: Record<string, string>; setSettingsDraft: Props['setSettingsDraft']; }) {
+function FieldList({
+  title,
+  items,
+  settingsData,
+  settingsDraft,
+  setSettingsDraft,
+  checkProvider,
+  checkingApiKey,
+  apiKeyCheckResult,
+  onCheckApiKey,
+}: {
+  title: string;
+  items: Array<[string, string, boolean]>;
+  settingsData: SettingsData | null;
+  settingsDraft: Record<string, string>;
+  setSettingsDraft: Props['setSettingsDraft'];
+  checkProvider?: AiProviderKey;
+  checkingApiKey: AiProviderKey | null;
+  apiKeyCheckResult?: ApiKeyCheckResult | null;
+  onCheckApiKey?: Props['onCheckApiKey'];
+}) {
+  const isChecking = Boolean(checkProvider && checkingApiKey === checkProvider);
   return (
     <div className="settings-card">
+      <div className="settings-card-head">
+        <h3>{title}</h3>
+        {checkProvider && onCheckApiKey ? (
+          <button className="btn secondary table-mini-btn" type="button" onClick={() => onCheckApiKey(checkProvider)} disabled={isChecking}>
+            {isChecking ? <><Loader2 size={14} /> Mengecek...</> : <><CheckCircle2 size={14} /> Cek API Key</>}
+          </button>
+        ) : null}
+      </div>
       {items.map(([key, label, secret]) => (
         <div className="filter-group" key={key}>
           <label>{label} {settingsData?.settings?.[key]?.set ? '(terisi)' : '(kosong)'}</label>
@@ -44,6 +87,21 @@ function FieldList({ items, settingsData, settingsDraft, setSettingsDraft }: { i
           />
         </div>
       ))}
+      {apiKeyCheckResult ? (
+        <div className={`settings-check-result ${apiKeyCheckResult.ready ? 'is-valid' : 'is-invalid'}`}>
+          <div className="settings-check-result-head">
+            <span className={`status-badge ${apiKeyCheckResult.ready ? 'closed' : 'open'}`}>{apiKeyCheckResult.ready ? 'VALID' : 'PERLU CEK'}</span>
+            <strong>{apiKeyCheckResult.message}</strong>
+          </div>
+          <div className="settings-check-result-meta">{apiKeyCheckResult.details}</div>
+          <div className="settings-check-result-meta">
+            {apiKeyCheckResult.source === 'draft' ? 'Menggunakan nilai draft saat ini.' : 'Menggunakan nilai yang tersimpan di server.'}
+          </div>
+          {apiKeyCheckResult.model ? <div className="settings-check-result-meta">Model: {apiKeyCheckResult.model}</div> : null}
+          {apiKeyCheckResult.baseUrl ? <div className="settings-check-result-meta">Base URL: {apiKeyCheckResult.baseUrl}</div> : null}
+          <div className="settings-check-result-meta">Dicek: {apiKeyCheckResult.checkedAt}</div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -59,6 +117,9 @@ export function SettingsSection({
   settingsDraft,
   setSettingsDraft,
   onSave,
+  onCheckApiKey,
+  checkingApiKey,
+  apiKeyCheckResults,
   onSync,
   syncing,
   activeView,
@@ -92,27 +153,35 @@ export function SettingsSection({
 
         {settingsPanel === 'ai' ? (
           <div className="settings-grid">
-            <FieldList settingsData={settingsData} settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} items={[
+            <FieldList title="Gemini" checkProvider="gemini" checkingApiKey={checkingApiKey} apiKeyCheckResult={apiKeyCheckResults.gemini} onCheckApiKey={onCheckApiKey} settingsData={settingsData} settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} items={[
               ['GEMINI_API_KEY', 'Gemini API Key', true],
               ['GEMINI_MODEL', 'Gemini Model', false],
             ]} />
-            <FieldList settingsData={settingsData} settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} items={[
+            <FieldList title="OpenAI" checkProvider="openai" checkingApiKey={checkingApiKey} apiKeyCheckResult={apiKeyCheckResults.openai} onCheckApiKey={onCheckApiKey} settingsData={settingsData} settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} items={[
               ['OPENAI_API_KEY', 'OpenAI API Key', true],
               ['OPENAI_BASE_URL', 'OpenAI Base URL', false],
               ['WA_PARSER_AI_MODEL', 'WA Parser AI Model', false],
+            ]} />
+            <FieldList title="Groq" checkProvider="groq" checkingApiKey={checkingApiKey} apiKeyCheckResult={apiKeyCheckResults.groq} onCheckApiKey={onCheckApiKey} settingsData={settingsData} settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} items={[
+              ['GROQ_API_KEY', 'Groq API Key', true],
+              ['GROQ_MODEL', 'Groq Model', false],
+            ]} />
+            <FieldList title="Mistral" checkProvider="mistral" checkingApiKey={checkingApiKey} apiKeyCheckResult={apiKeyCheckResults.mistral} onCheckApiKey={onCheckApiKey} settingsData={settingsData} settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} items={[
+              ['MISTRAL_API_KEY', 'Mistral API Key', true],
+              ['MISTRAL_MODEL', 'Mistral Model', false],
             ]} />
           </div>
         ) : null}
 
         {settingsPanel === 'odata' ? (
           <div className="settings-grid">
-            <FieldList settingsData={settingsData} settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} items={[
+            <FieldList title="OData Produksi" checkingApiKey={checkingApiKey} settingsData={settingsData} settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} items={[
               ['PPIC_ODATA_URL', 'OData URL', false],
               ['PPIC_ODATA_USER', 'OData User', false],
               ['PPIC_ODATA_PASSWORD', 'OData Password', true],
               ['PPIC_ODATA_TOKEN', 'OData Token', true],
             ]} />
-            <FieldList settingsData={settingsData} settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} items={[
+            <FieldList title="Jadwal Sync" checkingApiKey={checkingApiKey} settingsData={settingsData} settingsDraft={settingsDraft} setSettingsDraft={setSettingsDraft} items={[
               ['PPIC_ODATA_DATE_FROM', 'Date From', false],
               ['PPIC_ODATA_DATE_TO', 'Date To', false],
               ['PPIC_ODATA_PAGE_SIZE', 'Page Size', false],
