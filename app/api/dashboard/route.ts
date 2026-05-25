@@ -80,7 +80,10 @@ function getJakartaDayProgress() {
 
 function groupSum(rows: LedgerRow[], keyFn: (row: LedgerRow) => string, limit = 10) {
   const map = new Map<string, number>();
-  for (const row of rows) map.set(keyFn(row), (map.get(keyFn(row)) ?? 0) + num(row.quantity));
+  for (const row of rows) {
+    const key = keyFn(row);
+    map.set(key, (map.get(key) ?? 0) + num(row.quantity));
+  }
   return Array.from(map.entries())
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value)
