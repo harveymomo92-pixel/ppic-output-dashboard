@@ -62,6 +62,24 @@ type Props = {
   latestSyncStatus?: string | null;
 };
 
+function formatHistoryTimestamp(value: string | null | undefined) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('id-ID', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function trimHistoryText(value: string | null | undefined, maxChars = 48) {
+  const text = String(value ?? '').trim();
+  if (!text) return '-';
+  return text.length > maxChars ? `${text.slice(0, Math.max(1, maxChars - 3))}...` : text;
+}
+
 function FieldList({
   title,
   items,
@@ -222,22 +240,36 @@ export function SettingsSection({
                 </div>
               </div>
               {settingsData?.syncHistory?.length ? (
-                <div className="table-wrap">
-                  <table>
+                <div className="table-wrap settings-history-wrap">
+                  <table className="settings-history-table">
                     <thead>
                       <tr>
-                        <th>Started</th><th>Finished</th><th>Source</th><th>Status</th><th>Rows</th><th>Message</th>
+                        <th>Waktu</th>
+                        <th>Sumber</th>
+                        <th>Status</th>
+                        <th>Rows</th>
+                        <th>Catatan</th>
                       </tr>
                     </thead>
                     <tbody>
                       {settingsData.syncHistory.map((row) => (
                         <tr key={`sync-${row.id}`}>
-                          <td>{row.started_at || '-'}</td>
-                          <td>{row.finished_at || '-'}</td>
-                          <td>{row.source}</td>
-                          <td><span className={`status-badge ${row.status === 'success' ? 'closed' : row.status === 'running' ? 'monitoring' : 'open'}`}>{row.status}</span></td>
-                          <td>{numberFmt.format(row.row_count || 0)}</td>
-                          <td>{row.message || '-'}</td>
+                          <td data-label="Waktu">
+                            <div className="settings-history-stack">
+                              <strong>{formatHistoryTimestamp(row.started_at)}</strong>
+                              <span>Selesai {formatHistoryTimestamp(row.finished_at)}</span>
+                            </div>
+                          </td>
+                          <td data-label="Sumber" className="settings-history-cell">
+                            <span title={row.source}>{trimHistoryText(row.source, 18)}</span>
+                          </td>
+                          <td data-label="Status">
+                            <span className={`status-badge ${row.status === 'success' ? 'closed' : row.status === 'running' ? 'monitoring' : 'open'}`}>{row.status}</span>
+                          </td>
+                          <td data-label="Rows" className="num">{numberFmt.format(row.row_count || 0)}</td>
+                          <td data-label="Catatan" className="settings-history-note">
+                            <span title={row.message || '-'}>{trimHistoryText(row.message || '-', 56)}</span>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -253,24 +285,47 @@ export function SettingsSection({
                 </div>
               </div>
               {settingsData?.importHistory?.length ? (
-                <div className="table-wrap">
-                  <table>
+                <div className="table-wrap settings-history-wrap">
+                  <table className="settings-history-table">
                     <thead>
                       <tr>
-                        <th>Created</th><th>Source</th><th>Kind</th><th>Mode</th><th>Status</th><th>Saved</th><th>Processed</th><th>Message</th>
+                        <th>Waktu</th>
+                        <th>Sumber</th>
+                        <th>Info</th>
+                        <th>Status</th>
+                        <th>Hasil</th>
+                        <th>Catatan</th>
                       </tr>
                     </thead>
                     <tbody>
                       {settingsData.importHistory.map((row) => (
                         <tr key={`import-${row.id}`}>
-                          <td>{row.created_at || '-'}</td>
-                          <td>{row.source}</td>
-                          <td>{row.import_kind}</td>
-                          <td>{row.mode}{row.parser_mode ? ` / ${row.parser_mode}` : ''}</td>
-                          <td><span className={`status-badge ${row.status === 'success' ? 'closed' : 'open'}`}>{row.status}</span></td>
-                          <td>{numberFmt.format(row.saved_rows || 0)}</td>
-                          <td>{numberFmt.format(row.processed_rows || 0)}</td>
-                          <td>{row.message || '-'}</td>
+                          <td data-label="Waktu">
+                            <div className="settings-history-stack">
+                              <strong>{formatHistoryTimestamp(row.created_at)}</strong>
+                              <span>{row.total_rows ? `${numberFmt.format(row.total_rows)} total row` : 'Riwayat import'}</span>
+                            </div>
+                          </td>
+                          <td data-label="Sumber" className="settings-history-cell">
+                            <span title={row.source}>{trimHistoryText(row.source, 18)}</span>
+                          </td>
+                          <td data-label="Info" className="settings-history-cell">
+                            <span title={`${row.import_kind} · ${row.mode}${row.parser_mode ? ` · ${row.parser_mode}` : ''}`}>
+                              {trimHistoryText(`${row.import_kind} · ${row.mode}${row.parser_mode ? ` · ${row.parser_mode}` : ''}`, 24)}
+                            </span>
+                          </td>
+                          <td data-label="Status">
+                            <span className={`status-badge ${row.status === 'success' ? 'closed' : 'open'}`}>{row.status}</span>
+                          </td>
+                          <td data-label="Hasil">
+                            <div className="settings-history-stack">
+                              <strong>{numberFmt.format(row.saved_rows || 0)} / {numberFmt.format(row.processed_rows || 0)}</strong>
+                              <span>Simpan / proses</span>
+                            </div>
+                          </td>
+                          <td data-label="Catatan" className="settings-history-note">
+                            <span title={row.message || '-'}>{trimHistoryText(row.message || '-', 48)}</span>
+                          </td>
                         </tr>
                       ))}
                     </tbody>

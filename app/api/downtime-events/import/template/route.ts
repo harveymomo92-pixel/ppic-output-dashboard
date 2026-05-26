@@ -22,7 +22,7 @@ const guideRows = [
   ['pic', 'Opsional', 'Andi', 'Nama PIC'],
   ['root_cause', 'Opsional', 'Motor overheat', 'Akar masalah'],
   ['action_taken', 'Opsional', 'Replace bearing', 'Tindakan / follow up'],
-  ['duration_minutes', 'Tidak perlu', '', 'Akan dihitung otomatis dari start/end'],
+  ['duration_minutes', 'Tidak perlu', '', 'Akan dihitung otomatis dari start/end, atau isi manual jika start/end kosong'],
   ['estimated_loss_output', 'Tidak perlu', '', 'Akan dihitung dari sistem'],
 ];
 

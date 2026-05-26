@@ -16,7 +16,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { Activity, FileText, PackageSearch } from 'lucide-react';
+import { Activity, Eye, EyeOff, FileText, PackageSearch } from 'lucide-react';
 import { decimalFmt, numberFmt } from '@/lib/dashboard';
 import type { DashboardFilters } from '@/components/dashboard/dashboard-sidebar';
 
@@ -133,6 +133,8 @@ function makeSparsePercentLabel(totalPoints: number, fill: string) {
 
 type TrendLocalFilters = { area: string; machine: string };
 
+const onboardingStorageKey = 'ppic-overview-onboarding-hidden';
+
 const onboardingSteps = [
   {
     title: 'Pilih periode dan filter',
@@ -232,32 +234,82 @@ export function OverviewSection({
 }) {
   const trendAchievementLabel = useMemo(() => makeSparsePercentLabel(trend.length, '#5B7FC2'), [trend.length]);
   const trendRejectLabel = useMemo(() => makeSparsePercentLabel(trend.length, '#C26B5B'), [trend.length]);
+  const [onboardingHidden, setOnboardingHidden] = useState(false);
+  const [onboardingReady, setOnboardingReady] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(onboardingStorageKey);
+      setOnboardingHidden(saved === '1');
+    } catch {
+      setOnboardingHidden(false);
+    }
+    setOnboardingReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!onboardingReady) return;
+    try {
+      window.localStorage.setItem(onboardingStorageKey, onboardingHidden ? '1' : '0');
+    } catch {
+      // Ignore storage failures and keep the UI functional.
+    }
+  }, [onboardingHidden, onboardingReady]);
 
   return (
     <>
       {activeView === 'overview' ? (
       <>
-      <section className="card pad onboarding-card">
-        <div className="chart-head onboarding-head">
-          <div>
-            <h2>Mulai dari sini</h2>
-            <p>Kalau baru buka dashboard, ikuti tiga langkah ini dulu supaya langsung sampai ke insight yang dipakai kerja.</p>
+      {onboardingHidden ? (
+        <div className="onboarding-compact-rail">
+          <div className="onboarding-compact-copy">
+            <strong>Quick start disembunyikan</strong>
+            <span>Tekan tampilkan kalau perlu lihat alur kerja singkat lagi.</span>
           </div>
-          <div className="onboarding-chip">3 langkah</div>
+          <button
+            className="btn secondary onboarding-toggle-btn"
+            type="button"
+            onClick={() => setOnboardingHidden(false)}
+          >
+            <Eye size={16} />
+            Tampilkan
+          </button>
         </div>
-        <div className="onboarding-grid">
-          {onboardingSteps.map((step) => (
-            <div key={step.title} className="onboarding-step">
-              <div className="onboarding-step-tag">{step.tag}</div>
-              <strong>{step.title}</strong>
-              <span>{step.text}</span>
+      ) : (
+        <section className="card pad onboarding-card">
+          <div className="chart-head onboarding-head">
+            <div>
+              <h2>Mulai dari sini</h2>
+              <p>Kalau baru buka dashboard, ikuti tiga langkah ini dulu supaya langsung sampai ke insight yang dipakai kerja.</p>
             </div>
-          ))}
-        </div>
-        <div className="onboarding-footnote">
-          Istilah singkat: <strong>Pencapaian</strong> = output dibanding target, <strong>Reject</strong> = produk yang tidak lolos, <strong>Downtime</strong> = mesin berhenti atau gangguan.
-        </div>
-      </section>
+            <div className="onboarding-head-actions">
+              <div className="onboarding-chip">3 langkah</div>
+              <button
+                className="btn ghost onboarding-toggle-btn"
+                type="button"
+                onClick={() => setOnboardingHidden(true)}
+                aria-label="Sembunyikan quick start"
+                title="Sembunyikan quick start"
+              >
+                <EyeOff size={16} />
+                Sembunyikan
+              </button>
+            </div>
+          </div>
+          <div className="onboarding-grid">
+            {onboardingSteps.map((step) => (
+              <div key={step.title} className="onboarding-step">
+                <div className="onboarding-step-tag">{step.tag}</div>
+                <strong>{step.title}</strong>
+                <span>{step.text}</span>
+              </div>
+            ))}
+          </div>
+          <div className="onboarding-footnote">
+            Istilah singkat: <strong>Pencapaian</strong> = output dibanding target, <strong>Reject</strong> = produk yang tidak lolos, <strong>Downtime</strong> = mesin berhenti atau gangguan.
+          </div>
+        </section>
+      )}
 
       <div className="kpis">
         <div className="card kpi"><div className="label"><PackageSearch size={16}/>Target</div><div className="value">{numberFmt.format(totalTargetPcs)}</div><div className="hint">Target sesuai filter aktif</div></div>

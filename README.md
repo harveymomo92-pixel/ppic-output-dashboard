@@ -1,6 +1,6 @@
-# PPIC Output Dashboard
+# Operasi Produksi
 
-Dashboard internal untuk monitoring output produksi PPIC dari Business Central OData V4 service `ItemLedgerPPIC`.
+Dashboard internal untuk monitoring operasi produksi dari Business Central OData V4.
 
 ## Current Stage
 
@@ -8,7 +8,7 @@ Dashboard internal untuk monitoring output produksi PPIC dari Business Central O
 
 ## Source Data Snapshot
 
-- Source service: `ItemLedgerPPIC`
+- Source service: Business Central output source
 - Current sample/export: `/root/.openclaw/workspace/itemledgerppic_output_last3months.csv`
 - Filter sample: `Entry_Type = Output`, `Posting_Date >= 2026-02-13`
 - Rows: 5,804

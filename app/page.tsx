@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, CalendarDays, Clock3, Download, FileText, PackageSearch, Pencil, Plus, RotateCcw, Save, Settings2, Trash2, Upload, X } from 'lucide-react';
+import { Activity, CalendarDays, Clock3, Download, Eye, EyeOff, FileText, PackageSearch, Pencil, Plus, RotateCcw, Save, Settings2, Trash2, Upload, X } from 'lucide-react';
 import { DashboardSidebar, type DashboardFilters } from '@/components/dashboard/dashboard-sidebar';
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { buildMachineSynonymPack, cleanText, decimalFmt, exportCsv, normalizeCode, normalizeMachineAliasText, numberFmt, toNumber } from '@/lib/dashboard';
@@ -138,6 +138,8 @@ type DashboardData = {
   options: { areas: string[]; machines: string[]; lines: string[]; categories: string[] };
 };
 
+const downtimeGuideStorageKey = 'ppic-downtime-guide-hidden';
+
 type DetailTableFilters = {
   search: string;
   machine: string;
@@ -195,6 +197,68 @@ type AppSettingsResponse = {
   settings: SettingsDataType['settings'];
   syncHistory: SettingsDataType['syncHistory'];
   importHistory: SettingsDataType['importHistory'];
+};
+
+type DowntimeImportPreview = {
+  mode: 'append' | 'replace';
+  file_name: string;
+  total_rows: number;
+  valid_rows: number;
+  skipped_rows: number;
+  unique_rows: number;
+  inserted_rows: number;
+  updated_rows: number;
+  existing_rows: number;
+  replace_rows: number;
+  internal_duplicate_count: number;
+  existing_match_count: number;
+  overlap_count: number;
+  review_required: boolean;
+  can_proceed: boolean;
+  notes: string[];
+  conflicts: Array<{
+    kind: 'internal' | 'existing' | 'overlap';
+    row_index: number;
+    event_date: string;
+    shift_code: string;
+    area: string;
+    machine: string;
+    line: string;
+    category: string;
+    start_time: string;
+    end_time: string;
+    reason: string;
+    duplicate_key?: string;
+    existing_id?: number;
+    existing_start_time?: string;
+    existing_end_time?: string;
+  }>;
+};
+
+type DowntimeImportResult = {
+  source: string;
+  mode: string;
+  dryRun?: boolean;
+  parserMode?: string;
+  aiProvider?: string;
+  aiProviderUsed?: string;
+  processedRows: number;
+  savedRows: number;
+  insertedRows?: number;
+  updatedRows?: number;
+  existingRows?: number;
+  existingRowsScanned?: number;
+  skippedRows: number;
+  total: number;
+  message: string;
+  preview?: DowntimeImportPreview;
+  sample?: Array<{
+    event_date: string;
+    machine: string;
+    category: string;
+    status: string;
+    duration_minutes: number;
+  }>;
 };
 
 const emptyDashboard: DashboardData = {
@@ -467,6 +531,9 @@ type DowntimeEventFilters = {
   category: '' | DowntimeEventCategory;
   shift: string;
   status: '' | DowntimeEventStatus;
+  area: string;
+  machine: string;
+  date: string;
 };
 
 type DowntimePanel = 'workflow' | 'import' | 'input' | 'followup' | 'table' | 'analysis';
@@ -486,7 +553,7 @@ const detailTablePageSize = 20;
 const emptyDetailTableFilters: DetailTableFilters = { search: '', machine: '' };
 const emptyTargetTableFilters: TargetTableFilters = { search: '', area: '', status: '' };
 const emptyTrendLocalFilters: TrendLocalFilters = { area: '', machine: '' };
-const emptyDowntimeEventFilters: DowntimeEventFilters = { category: '', shift: '', status: '' };
+const emptyDowntimeEventFilters: DowntimeEventFilters = { category: '', shift: '', status: '', area: '', machine: '', date: '' };
 const emptyDowntimeEventForm: DowntimeEventForm = {
   event_date: '',
   shift_code: 'Shift 1',
@@ -690,6 +757,22 @@ function minutesBetween(eventDate: string, startTime: string, endTime: string) {
   return Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
 }
 
+function parseDowntimeDurationMinutes(value: string) {
+  if (!value.trim()) return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+}
+
+function resolveDowntimeDurationMinutes(form: DowntimeEventForm) {
+  const manualDuration = parseDowntimeDurationMinutes(form.duration_minutes);
+  if (manualDuration !== null) return manualDuration;
+  if (form.event_date && form.start_time && form.end_time) {
+    return minutesBetween(form.event_date, form.start_time, form.end_time);
+  }
+  return null;
+}
+
 function formFromDowntimeEvent(row: DowntimeEventRow): DowntimeEventForm {
   return {
     event_date: row.event_date,
@@ -700,7 +783,7 @@ function formFromDowntimeEvent(row: DowntimeEventRow): DowntimeEventForm {
     category: row.category,
     start_time: row.start_time,
     end_time: row.end_time,
-    duration_minutes: row.duration_minutes ? String(row.duration_minutes) : '',
+    duration_minutes: String(row.duration_minutes ?? ''),
     status: row.status,
     pic: row.pic,
     root_cause: row.root_cause,
@@ -1151,13 +1234,27 @@ function MetricPill({ label, value, hint }: { label: string; value: string; hint
   );
 }
 
-function TableFilterInput({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) {
+function TableFilterInput({
+  value,
+  onChange,
+  placeholder,
+  type = 'text',
+  label = 'Cari',
+  className = '',
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  type?: 'text' | 'date';
+  label?: string;
+  className?: string;
+}) {
   return (
-    <div className="local-filter-control local-filter-search">
-      <span className="local-filter-label">Cari</span>
+    <div className={`local-filter-control local-filter-search${className ? ` ${className}` : ''}`}>
+      <span className="local-filter-label">{label}</span>
       <input
         className="detail-table-input"
-        type="text"
+        type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
@@ -1166,10 +1263,10 @@ function TableFilterInput({ value, onChange, placeholder }: { value: string; onC
   );
 }
 
-function TableFilterSelect({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: FilterOption[] }) {
+function TableFilterSelect({ value, onChange, options, className = '' }: { value: string; onChange: (value: string) => void; options: FilterOption[]; className?: string }) {
   const label = (options[0]?.label ?? 'Filter').replace(/^Semua\s+/i, '') || 'Filter';
   return (
-    <div className="local-filter-control local-filter-select">
+    <div className={`local-filter-control local-filter-select${className ? ` ${className}` : ''}`}>
       <span className="local-filter-label">{label}</span>
       <select className="detail-table-select" value={value} onChange={(event) => onChange(event.target.value)}>
         {options.map((option) => (
@@ -1365,10 +1462,12 @@ export default function Home() {
   const [editingDowntimeEventId, setEditingDowntimeEventId] = useState<string | null>(null);
   const [savingDowntimeEvent, setSavingDowntimeEvent] = useState(false);
   const [downtimeImportMode, setDowntimeImportMode] = useState<'append' | 'replace'>('append');
-  const [downtimeImporting, setDowntimeImporting] = useState(false);
+  const [downtimeImportPreviewing, setDowntimeImportPreviewing] = useState(false);
+  const [downtimeImportSaving, setDowntimeImportSaving] = useState(false);
   const [downtimeImportFile, setDowntimeImportFile] = useState<File | null>(null);
   const [downtimeImportDragging, setDowntimeImportDragging] = useState(false);
-  const [downtimeImportResult, setDowntimeImportResult] = useState<{ source: string; mode: string; parserMode?: string; aiProvider?: string; aiProviderUsed?: string; processedRows: number; savedRows: number; insertedRows?: number; updatedRows?: number; existingRows?: number; existingRowsScanned?: number; skippedRows: number; total: number; message: string } | null>(null);
+  const [downtimeImportPreview, setDowntimeImportPreview] = useState<DowntimeImportPreview | null>(null);
+  const [downtimeImportResult, setDowntimeImportResult] = useState<DowntimeImportResult | null>(null);
   const [downtimeImportError, setDowntimeImportError] = useState<string | null>(null);
   const [downtimeWaText, setDowntimeWaText] = useState('');
   const [downtimeWaViewMode, setDowntimeWaViewMode] = useState<'full' | 'output-only'>('output-only');
@@ -1387,6 +1486,8 @@ export default function Home() {
   const [downtimeWaAliasTarget, setDowntimeWaAliasTarget] = useState('');
   const [downtimeWaBaselineRows, setDowntimeWaBaselineRows] = useState<DowntimeWaParsedRow[]>([]);
   const [downtimePanel, setDowntimePanel] = useState<DowntimePanel>('workflow');
+  const [downtimeGuideHidden, setDowntimeGuideHidden] = useState(false);
+  const [downtimeGuideReady, setDowntimeGuideReady] = useState(false);
   const [settingsPanel, setSettingsPanel] = useState<SettingsPanel>('ai');
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
@@ -1484,6 +1585,25 @@ export default function Home() {
     next: string;
     steps: Array<{ title: string; text: string }>;
   }>), []);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(downtimeGuideStorageKey);
+      setDowntimeGuideHidden(saved === '1');
+    } catch {
+      setDowntimeGuideHidden(false);
+    }
+    setDowntimeGuideReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!downtimeGuideReady) return;
+    try {
+      window.localStorage.setItem(downtimeGuideStorageKey, downtimeGuideHidden ? '1' : '0');
+    } catch {
+      // Ignore storage failures and keep the UI functional.
+    }
+  }, [downtimeGuideHidden, downtimeGuideReady]);
 
   const formatAiChain = (result?: Pick<DowntimeWaParseResult, 'aiProvider' | 'aiProviderUsed'>) => {
     if (!result?.aiProvider && !result?.aiProviderUsed) return '-';
@@ -2060,6 +2180,9 @@ export default function Home() {
     if (nextFilters.dateFrom) params.set('dateFrom', nextFilters.dateFrom);
     if (nextFilters.dateTo) params.set('dateTo', nextFilters.dateTo);
     if (nextFilters.machine) params.set('machine', nextFilters.machine);
+    if (eventFilters.date) params.set('date', eventFilters.date);
+    if (eventFilters.area) params.set('area', eventFilters.area);
+    if (eventFilters.machine) params.set('machine', eventFilters.machine);
     if (eventFilters.category) params.set('category', eventFilters.category);
     if (eventFilters.shift) params.set('shift', eventFilters.shift);
     if (eventFilters.status) params.set('status', eventFilters.status);
@@ -2865,8 +2988,15 @@ export default function Home() {
     setDowntimeEventDrafts([createDowntimeEventDraft({ event_date: downtimeEventDefaultDate })]);
   };
 
-  const updateDowntimeDraft = (ui_id: string, patch: Partial<DowntimeEventForm>) => {
-    setDowntimeEventDrafts((current) => current.map((item) => item.ui_id === ui_id ? { ...item, form: { ...item.form, ...patch } } : item));
+  const updateDowntimeDraft = (ui_id: string, patch: Partial<DowntimeEventForm>, options?: { syncDuration?: boolean }) => {
+    setDowntimeEventDrafts((current) => current.map((item) => {
+      if (item.ui_id !== ui_id) return item;
+      const nextForm = { ...item.form, ...patch };
+      if (options?.syncDuration && !nextForm.duration_minutes.trim() && nextForm.event_date && nextForm.start_time && nextForm.end_time) {
+        nextForm.duration_minutes = String(minutesBetween(nextForm.event_date, nextForm.start_time, nextForm.end_time));
+      }
+      return { ...item, form: nextForm };
+    }));
   };
 
   const pickDowntimeSignal = (row: DowntimeSignalRow) => {
@@ -2901,6 +3031,7 @@ export default function Home() {
           shift_code: previous.shift_code || getDefaultDowntimeShiftCode(),
           area: previous.area,
           category: previous.category,
+          duration_minutes: previous.duration_minutes,
         }),
       ];
     });
@@ -2930,26 +3061,29 @@ export default function Home() {
         const form = draft.form;
         const normalizedShiftCode = form.shift_code || 'Shift 1';
         const shiftIsValid = downtimeShiftChoices.some((option) => option.value === normalizedShiftCode);
-        if (!form.event_date || !shiftIsValid || !form.area || !form.machine || !form.start_time || !form.end_time) {
-          window.alert(`Card ${index + 1}: tanggal, shift, area, mesin, start, dan end downtime wajib diisi.`);
+        const hasManualDuration = parseDowntimeDurationMinutes(form.duration_minutes) !== null;
+        const hasTimePair = Boolean(form.start_time && form.end_time);
+        if (!form.event_date || !shiftIsValid || !form.area || !form.machine || (!hasManualDuration && !hasTimePair)) {
+          window.alert(`Card ${index + 1}: tanggal, shift, area, mesin, serta start/end atau durasi wajib diisi.`);
           return;
         }
       }
       for (const draft of downtimeEventDrafts) {
         const form = draft.form;
         const normalizedShiftCode = form.shift_code || 'Shift 1';
+        const resolvedDuration = resolveDowntimeDurationMinutes(form);
+        if (resolvedDuration === null) {
+          throw new Error('Durasi downtime tidak valid.');
+        }
         const normalizedForm = {
           ...form,
           shift_code: normalizedShiftCode,
         };
-        const duration = normalizedForm.duration_minutes !== '' && normalizedForm.duration_minutes !== null && normalizedForm.duration_minutes !== undefined
-          ? String(form.duration_minutes)
-          : String(minutesBetween(normalizedForm.event_date, normalizedForm.start_time, normalizedForm.end_time));
         const endpoint = draft.editingId ? `/api/downtime-events/${draft.editingId}` : '/api/downtime-events';
         const response = await fetch(endpoint, {
           method: draft.editingId ? 'PUT' : 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...normalizedForm, duration_minutes: duration }),
+          body: JSON.stringify({ ...normalizedForm, duration_minutes: String(resolvedDuration) }),
         });
         if (!response.ok) throw new Error('Gagal menyimpan downtime event');
       }
@@ -2984,11 +3118,40 @@ export default function Home() {
     if (file && !isDowntimeImportFileAllowed(file)) {
       setDowntimeImportError('Gunakan file CSV atau XLSX.');
       setDowntimeImportFile(null);
+      setDowntimeImportPreview(null);
       return;
     }
     setDowntimeImportError(null);
     setDowntimeImportResult(null);
+    setDowntimeImportPreview(null);
     setDowntimeImportFile(file);
+  };
+
+  const runDowntimeBackfillPreview = async () => {
+    if (!downtimeImportFile) {
+      setDowntimeImportError('Pilih file CSV atau XLSX dulu.');
+      return;
+    }
+    setDowntimeImportPreviewing(true);
+    setDowntimeImportError(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', downtimeImportFile);
+      formData.append('mode', downtimeImportMode);
+      formData.append('dryRun', '1');
+      const response = await fetch('/api/downtime-events/import', { method: 'POST', body: formData });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Gagal import downtime');
+      }
+      setDowntimeImportPreview((payload.data?.preview ?? null) as DowntimeImportPreview | null);
+      setDowntimeImportResult(payload.data ?? null);
+    } catch (error) {
+      console.error(error);
+      setDowntimeImportError(error instanceof Error ? error.message : 'Preview downtime gagal.');
+    } finally {
+      setDowntimeImportPreviewing(false);
+    }
   };
 
   const uploadDowntimeBackfill = async () => {
@@ -2996,7 +3159,11 @@ export default function Home() {
       setDowntimeImportError('Pilih file CSV atau XLSX dulu.');
       return;
     }
-    setDowntimeImporting(true);
+    if (!downtimeImportPreview) {
+      setDowntimeImportError('Preview dulu sebelum save. Klik Preview Import terlebih dahulu.');
+      return;
+    }
+    setDowntimeImportSaving(true);
     setDowntimeImportError(null);
     try {
       const formData = new FormData();
@@ -3008,13 +3175,14 @@ export default function Home() {
         throw new Error(payload.error || 'Gagal import downtime');
       }
       setDowntimeImportResult(payload.data ?? null);
+      setDowntimeImportPreview(null);
       setDowntimeImportFile(null);
       await loadDowntimeEvents(filters, downtimeEventFilters);
     } catch (error) {
       console.error(error);
       setDowntimeImportError(error instanceof Error ? error.message : 'Import downtime gagal.');
     } finally {
-      setDowntimeImporting(false);
+      setDowntimeImportSaving(false);
     }
   };
 
@@ -3123,14 +3291,14 @@ export default function Home() {
     setExporting(true);
     try {
       if (activeView === 'data-detail') {
-        exportCsv(filteredDetailRows, 'ppic-resume-harian-filtered.csv');
+        exportCsv(filteredDetailRows, 'operasi-produksi-resume-harian-filtered.csv');
         return;
       }
 
       const response = await fetch(buildDashboardUrl(filters, 'data-detail'));
       if (!response.ok) throw new Error('Gagal menyiapkan export detail');
       const payload = await response.json() as DashboardData;
-      exportCsv(payload.detailRows ?? [], 'ppic-resume-harian-filtered.csv');
+      exportCsv(payload.detailRows ?? [], 'operasi-produksi-resume-harian-filtered.csv');
     } finally {
       setExporting(false);
     }
@@ -3210,9 +3378,9 @@ export default function Home() {
             <div className="topbar-left">
               <span className="topbar-mobile-trigger"><SidebarTrigger /></span>
               <div className="topbar-title-block">
-                <p className="eyebrow">PPIC Output Dashboard · Prototype</p>
+                <p className="eyebrow">Operasi Produksi · Prototype</p>
                 <div className="topbar-title-row">
-                  <h1>{activeView === 'master-entity' ? 'Data Mesin & Target' : activeView === 'data-detail' ? 'Detail Produksi Harian' : activeView === 'downtime' ? 'Gangguan Produksi' : activeView === 'compare-period' ? 'Bandingkan Periode' : activeView === 'settings' ? 'Pengaturan Sistem' : 'Ringkasan Produksi'}</h1>
+                  <h1>{activeView === 'master-entity' ? 'Data Mesin & Target' : activeView === 'data-detail' ? 'Detail Produksi Harian' : activeView === 'downtime' ? `Gangguan Produksi · ${downtimePanelLabels[downtimePanel]}` : activeView === 'compare-period' ? 'Bandingkan Periode' : activeView === 'settings' ? 'Pengaturan Sistem' : 'Ringkasan Produksi'}</h1>
                   {activeView === 'data-detail' ? (
                     <button className="btn secondary topbar-back-btn" type="button" onClick={backFromDetail}>
                       <RotateCcw size={16} />
@@ -3278,30 +3446,52 @@ export default function Home() {
             ) : null}
             {activeView === 'downtime' && downtimePanel !== 'analysis' ? (
               <section className="card pad downtime-panel-card" id="downtime-panel-content">
-                <div className="chart-head">
-                  <div>
-                    <h2>Gangguan Produksi · {downtimePanelLabels[downtimePanel]}</h2>
-                    <p>{downtimePanelGuides[downtimePanel].subtitle}</p>
-                  </div>
-                </div>
-
-                <section className="card pad soft-card downtime-guide-card">
-                  <div className="chart-head downtime-guide-head">
-                    <div>
-                      <h3>{downtimePanelGuides[downtimePanel].title}</h3>
-                      <p>{downtimePanelGuides[downtimePanel].next}</p>
+                {downtimeGuideHidden ? (
+                  <div className="onboarding-compact-rail downtime-guide-compact-rail">
+                    <div className="onboarding-compact-copy">
+                      <strong>{downtimePanelGuides[downtimePanel].title} disembunyikan</strong>
+                      <span>{downtimePanelGuides[downtimePanel].subtitle}</span>
                     </div>
-                    <div className="onboarding-chip">Fokus saat ini</div>
+                    <button
+                      className="btn secondary onboarding-toggle-btn"
+                      type="button"
+                      onClick={() => setDowntimeGuideHidden(false)}
+                    >
+                      <Eye size={16} />
+                      Tampilkan
+                    </button>
                   </div>
-                  <div className="downtime-guide-grid">
-                    {downtimePanelGuides[downtimePanel].steps.map((step) => (
-                      <div key={step.title} className="downtime-guide-step">
-                        <strong>{step.title}</strong>
-                        <span>{step.text}</span>
+                ) : (
+                  <section className="card pad soft-card downtime-guide-card">
+                    <div className="chart-head downtime-guide-head">
+                      <div>
+                        <h3>{downtimePanelGuides[downtimePanel].title}</h3>
+                        <p>{downtimePanelGuides[downtimePanel].next}</p>
                       </div>
-                    ))}
-                  </div>
-                </section>
+                      <div className="downtime-guide-head-actions">
+                        <div className="onboarding-chip">Fokus saat ini</div>
+                        <button
+                          className="btn ghost onboarding-toggle-btn"
+                          type="button"
+                          onClick={() => setDowntimeGuideHidden(true)}
+                          aria-label="Sembunyikan guide gangguan produksi"
+                          title="Sembunyikan guide gangguan produksi"
+                        >
+                          <EyeOff size={16} />
+                          Sembunyikan
+                        </button>
+                      </div>
+                    </div>
+                    <div className="downtime-guide-grid">
+                      {downtimePanelGuides[downtimePanel].steps.map((step) => (
+                        <div key={step.title} className="downtime-guide-step">
+                          <strong>{step.title}</strong>
+                          <span>{step.text}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
 
                 {downtimePanel === 'workflow' ? (
                   <>
@@ -3334,12 +3524,62 @@ export default function Home() {
                         <button className="btn secondary" type="button" onClick={() => downloadDowntimeTemplate('xlsx')}>Template XLSX</button>
                       </div>
                       <input type="file" accept=".csv,.xlsx" onChange={(event) => setDowntimeImportSelectedFile(event.target.files?.[0] ?? null)} />
-                      <select className="detail-table-select" value={downtimeImportMode} onChange={(event) => setDowntimeImportMode(event.target.value as 'append' | 'replace')}>
+                      <select className="detail-table-select" value={downtimeImportMode} onChange={(event) => {
+                        setDowntimeImportMode(event.target.value as 'append' | 'replace');
+                        setDowntimeImportPreview(null);
+                        setDowntimeImportResult(null);
+                      }}>
                         <option value="append">Append / tambah aman</option>
                         <option value="replace">Replace downtime events</option>
                       </select>
-                      <button className="btn primary" type="button" onClick={uploadDowntimeBackfill} disabled={downtimeImporting || !downtimeImportFile}>{downtimeImporting ? 'Importing...' : 'Import File'}</button>
+                      <div className="detail-table-toolbar-group">
+                        <button className="btn primary" type="button" onClick={runDowntimeBackfillPreview} disabled={downtimeImportPreviewing || downtimeImportSaving || !downtimeImportFile}>{downtimeImportPreviewing ? 'Previewing...' : 'Preview Import'}</button>
+                        <button className="btn secondary" type="button" onClick={uploadDowntimeBackfill} disabled={downtimeImportSaving || downtimeImportPreviewing || !downtimeImportFile || !downtimeImportPreview?.can_proceed}>{downtimeImportSaving ? 'Saving...' : 'Save Import'}</button>
+                      </div>
                       <p className="muted">Data existing saat ini: {numberFmt.format(downtimeEvents.length)} event downtime. Import akan dibandingkan dengan data ini saat save.</p>
+                      {downtimeImportPreview ? (
+                        <div className={`warning-box ${downtimeImportPreview.review_required ? 'error-banner' : ''}`}>
+                          <strong>Preview Import</strong>
+                          <div className="compare-summary-grid downtime-conflict-summary">
+                            <div className="compare-summary-card">
+                              <span>Valid row</span>
+                              <strong>{numberFmt.format(downtimeImportPreview.valid_rows)}</strong>
+                              <em>{downtimeImportPreview.skipped_rows} row di-skip</em>
+                            </div>
+                            <div className="compare-summary-card">
+                              <span>Insert / update</span>
+                              <strong>{numberFmt.format(downtimeImportPreview.inserted_rows)} / {numberFmt.format(downtimeImportPreview.updated_rows)}</strong>
+                              <em>{downtimeImportPreview.existing_match_count} match existing · {downtimeImportPreview.replace_rows} replace rows</em>
+                            </div>
+                            <div className="compare-summary-card">
+                              <span>Conflict</span>
+                              <strong>{numberFmt.format(downtimeImportPreview.internal_duplicate_count + downtimeImportPreview.overlap_count)}</strong>
+                              <em>{downtimeImportPreview.review_required ? 'Perlu review sebelum save' : 'Siap lanjut save'}</em>
+                            </div>
+                          </div>
+                          <div className="downtime-conflict-lists">
+                            {downtimeImportPreview.conflicts.filter((hint) => hint.kind === 'existing').length ? (
+                              <div>
+                                <span className="muted">Match existing</span>
+                                <ul>{downtimeImportPreview.conflicts.filter((hint) => hint.kind === 'existing').slice(0, 5).map((hint) => <li key={`import-existing-${hint.row_index}`}>row {hint.row_index + 1} · {hint.machine} · {hint.start_time}-{hint.end_time} · {hint.reason}</li>)}</ul>
+                              </div>
+                            ) : null}
+                            {downtimeImportPreview.conflicts.filter((hint) => hint.kind === 'overlap').length ? (
+                              <div>
+                                <span className="muted">Overlap</span>
+                                <ul>{downtimeImportPreview.conflicts.filter((hint) => hint.kind === 'overlap').slice(0, 5).map((hint) => <li key={`import-overlap-${hint.row_index}`}>row {hint.row_index + 1} · {hint.machine} · {hint.start_time}-{hint.end_time} · {hint.reason}</li>)}</ul>
+                              </div>
+                            ) : null}
+                            {downtimeImportPreview.conflicts.filter((hint) => hint.kind === 'internal').length ? (
+                              <div>
+                                <span className="muted">Duplikat internal</span>
+                                <ul>{downtimeImportPreview.conflicts.filter((hint) => hint.kind === 'internal').slice(0, 5).map((hint) => <li key={`import-internal-${hint.row_index}`}>row {hint.row_index + 1} · {hint.machine} · {hint.start_time}-{hint.end_time} · {hint.reason}</li>)}</ul>
+                              </div>
+                            ) : null}
+                          </div>
+                          {downtimeImportPreview.notes.length ? <ul>{downtimeImportPreview.notes.slice(0, 4).map((note, index) => <li key={`import-note-${index}`}>{note}</li>)}</ul> : null}
+                        </div>
+                      ) : null}
                     </section>
                     <section className="card pad soft-card">
                       <h3>Copas WA Parser</h3>
@@ -3597,7 +3837,7 @@ export default function Home() {
                           <div className="downtime-form-row">
                             <label className="downtime-field">
                               <span>Tanggal</span>
-                              <input className="detail-table-input" type="date" value={draft.form.event_date} onChange={(e) => setDowntimeEventDrafts((current) => current.map((item) => item.ui_id === draft.ui_id ? { ...item, form: { ...item.form, event_date: e.target.value } } : item))} />
+                              <input className="detail-table-input" type="date" value={draft.form.event_date} onChange={(e) => updateDowntimeDraft(draft.ui_id, { event_date: e.target.value }, { syncDuration: true })} />
                             </label>
                             <SelectField
                               label="Shift"
@@ -3622,14 +3862,18 @@ export default function Home() {
                               onChange={(machine) => updateDowntimeDraft(draft.ui_id, { machine })}
                             />
                           </div>
-                          <div className="downtime-form-row">
+                          <div className="downtime-form-row downtime-form-row-time">
                             <label className="downtime-field">
                               <span>Start</span>
-                              <input className="detail-table-input" type="time" value={draft.form.start_time} onChange={(e) => updateDowntimeDraft(draft.ui_id, { start_time: e.target.value })} />
+                              <input className="detail-table-input" type="time" value={draft.form.start_time} onChange={(e) => updateDowntimeDraft(draft.ui_id, { start_time: e.target.value }, { syncDuration: true })} />
                             </label>
                             <label className="downtime-field">
                               <span>End</span>
-                              <input className="detail-table-input" type="time" value={draft.form.end_time} onChange={(e) => updateDowntimeDraft(draft.ui_id, { end_time: e.target.value })} />
+                              <input className="detail-table-input" type="time" value={draft.form.end_time} onChange={(e) => updateDowntimeDraft(draft.ui_id, { end_time: e.target.value }, { syncDuration: true })} />
+                            </label>
+                            <label className="downtime-field downtime-duration-field">
+                              <span>Durasi</span>
+                              <input className="detail-table-input" type="number" min="0" step="1" inputMode="numeric" placeholder="Otomatis / menit" value={draft.form.duration_minutes} onChange={(e) => updateDowntimeDraft(draft.ui_id, { duration_minutes: e.target.value })} />
                             </label>
                             <label className="downtime-field">
                               <span>Kategori</span>
@@ -3666,7 +3910,20 @@ export default function Home() {
 
                 {(downtimePanel === 'followup' || downtimePanel === 'table') ? (
                   <>
-                    <DataTableToolbar totalCount={downtimePanel === 'followup' ? downtimeFollowUpRows.length : downtimeEvents.length} hasActiveFilters={Boolean(downtimeEventFilters.category || downtimeEventFilters.shift || downtimeEventFilters.status)} onReset={() => setDowntimeEventFilters(emptyDowntimeEventFilters)} left={<><TableFilterSelect value={downtimeEventFilters.category} onChange={(category) => setDowntimeEventFilters((c) => ({ ...c, category: category as DowntimeEventFilters['category'] }))} options={[{ value: '', label: 'Semua kategori' }, ...downtimeCategories]} /><TableFilterSelect value={downtimeEventFilters.status} onChange={(status) => setDowntimeEventFilters((c) => ({ ...c, status: status as DowntimeEventFilters['status'] }))} options={[{ value: '', label: 'Semua status' }, ...downtimeStatuses]} /><TableFilterSelect value={downtimeEventFilters.shift} onChange={(shift) => setDowntimeEventFilters((c) => ({ ...c, shift }))} options={[{ value: '', label: 'Semua shift' }, ...downtimeEventShiftOptions.map((shift) => ({ value: shift, label: shift }))]} /></>} />
+                    <DataTableToolbar totalCount={downtimePanel === 'followup' ? downtimeFollowUpRows.length : downtimeEvents.length} hasActiveFilters={Boolean(downtimeEventFilters.category || downtimeEventFilters.shift || downtimeEventFilters.status || downtimeEventFilters.area || downtimeEventFilters.machine || downtimeEventFilters.date)} onReset={() => setDowntimeEventFilters(emptyDowntimeEventFilters)} left={<>
+                      <div className="downtime-filter-grid">
+                        <div className="downtime-filter-row">
+                          <TableFilterInput className="downtime-filter-date" value={downtimeEventFilters.date} onChange={(date) => setDowntimeEventFilters((c) => ({ ...c, date }))} placeholder="Pilih tanggal" type="date" label="Tanggal" />
+                          <TableFilterSelect value={downtimeEventFilters.area} onChange={(area) => setDowntimeEventFilters((c) => ({ ...c, area }))} options={[{ value: '', label: 'Semua area' }, ...downtimeAreaOptions.map((area) => ({ value: area, label: area }))]} />
+                          <TableFilterSelect value={downtimeEventFilters.machine} onChange={(machine) => setDowntimeEventFilters((c) => ({ ...c, machine }))} options={[{ value: '', label: 'Semua mesin' }, ...downtimeMachineOptions.map((machine) => ({ value: machine, label: machine }))]} />
+                        </div>
+                        <div className="downtime-filter-row">
+                          <TableFilterSelect value={downtimeEventFilters.shift} onChange={(shift) => setDowntimeEventFilters((c) => ({ ...c, shift }))} options={[{ value: '', label: 'Semua shift' }, ...downtimeEventShiftOptions.map((shift) => ({ value: shift, label: shift }))]} />
+                          <TableFilterSelect value={downtimeEventFilters.category} onChange={(category) => setDowntimeEventFilters((c) => ({ ...c, category: category as DowntimeEventFilters['category'] }))} options={[{ value: '', label: 'Semua kategori' }, ...downtimeCategories]} />
+                          <TableFilterSelect value={downtimeEventFilters.status} onChange={(status) => setDowntimeEventFilters((c) => ({ ...c, status: status as DowntimeEventFilters['status'] }))} options={[{ value: '', label: 'Semua status' }, ...downtimeStatuses]} />
+                        </div>
+                      </div>
+                    </>} />
                     <div className="detail-table-scroll"><table className="detail-table downtime-event-table"><thead><tr><th>Tanggal & Shift</th><th>Mesin & Area</th><th>Waktu</th><th className="num">Durasi</th><th>Kategori</th><th>Status</th><th>Penyebab / Tindakan</th><th className="num">Loss</th><th>PIC</th><th>Aksi</th></tr></thead><tbody>{(downtimePanel === 'followup' ? downtimeFollowUpRows.map((x) => x.event) : downtimeEvents).length ? (downtimePanel === 'followup' ? downtimeFollowUpRows.map((x) => x.event) : downtimeEvents).map((row) => <tr key={row.id} className={`downtime-row-${row.status} ${!cleanText(row.root_cause, '') || !cleanText(row.action_taken, '') ? 'is-alert' : ''}`}><td><strong>{row.event_date}</strong><br/><span className="muted">Shift {row.shift_code || '-'}</span></td><td><div className="machine-product-cell"><strong>{row.machine}</strong><span>{row.area || '-'}{row.linked_signal_type ? ` · ${downtimeSignalLabel(row.linked_signal_type as DowntimeSignalType)}` : ''}</span></div></td><td>{row.start_time} - {row.end_time}</td><td className="num">{decimalFmt.format(row.duration_minutes)} menit</td><td>{row.category}</td><td><span className={`status-badge ${row.status}`}>{row.status}</span></td><td><strong>{row.root_cause || 'Penyebab belum diisi'}</strong><br/><span className="muted">{row.action_taken || 'Tindakan belum diisi'}</span></td><td className="num">{row.estimated_loss_output ? numberFmt.format(row.estimated_loss_output) : '-'}</td><td>{row.pic || '-'}</td><td><div className="table-actions"><button className="btn secondary table-mini-btn" type="button" onClick={() => editDowntimeEvent(row)}>Edit</button><button className="btn secondary table-mini-btn danger" type="button" onClick={() => deleteDowntimeEvent(row.id)}>Hapus</button></div></td></tr>) : <tr><td colSpan={10}><div className="empty guided-empty table-empty"><strong>{downtimePanel === 'followup' ? 'Belum ada tindak lanjut' : 'Belum ada event gangguan'}</strong><p>{downtimePanel === 'followup' ? 'Event yang butuh penyebab/tindakan akan muncul di sini.' : 'Klik Input Event untuk mencatat gangguan produksi pertama.'}</p></div></td></tr>}</tbody></table></div>
                   </>
                 ) : null}

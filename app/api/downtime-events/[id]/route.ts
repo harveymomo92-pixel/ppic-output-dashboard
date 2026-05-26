@@ -54,8 +54,10 @@ function normalizeBody(body: Record<string, unknown>) {
   const endTime = clean(body.end_time);
   const rawStatus = clean(body.status || 'open');
   const rawCategory = clean(body.category || 'other');
-  const durationFromBody = numberOrNull(body.duration_minutes);
+  const hasDurationBody = body.duration_minutes !== null && body.duration_minutes !== undefined && body.duration_minutes !== '';
+  const durationFromBody = hasDurationBody ? numberOrNull(body.duration_minutes) : null;
   const calculatedDuration = minutesBetween(eventDate, startTime, endTime);
+  const hasTimePair = Boolean(startTime && endTime);
   return {
     event_date: eventDate,
     shift_code: clean(body.shift_code),
@@ -65,13 +67,15 @@ function normalizeBody(body: Record<string, unknown>) {
     category: allowedCategories.has(rawCategory) ? rawCategory : 'other',
     start_time: startTime,
     end_time: endTime,
-    duration_minutes: durationFromBody && durationFromBody > 0 ? durationFromBody : calculatedDuration,
+    duration_minutes: durationFromBody !== null ? durationFromBody : calculatedDuration,
     status: allowedStatuses.has(rawStatus) ? rawStatus : 'open',
     pic: clean(body.pic),
     root_cause: clean(body.root_cause),
     action_taken: clean(body.action_taken),
     estimated_loss_output: numberOrNull(body.estimated_loss_output) ?? 0,
     linked_signal_type: clean(body.linked_signal_type),
+    has_duration_body: hasDurationBody,
+    has_time_pair: hasTimePair,
   };
 }
 
@@ -79,12 +83,11 @@ export async function PUT(request: NextRequest, context: RouteContext) {
   const { id } = await context.params;
   const body = await request.json() as Record<string, unknown>;
   const row = normalizeBody(body);
-  if (!row.event_date || !row.machine || !row.category || !row.start_time || !row.end_time) {
-    return NextResponse.json({ error: 'event_date, machine, category, start_time, and end_time are required' }, { status: 400 });
-  }
-
   const db = getDb();
   try {
+    if (!row.event_date || !row.machine || !row.category || (!row.has_time_pair && !row.has_duration_body)) {
+      return NextResponse.json({ error: 'event_date, machine, category, dan start/end atau duration_minutes wajib diisi' }, { status: 400 });
+    }
     const result = db.prepare(`
       UPDATE downtime_events SET
         event_date = ?, shift_code = ?, area = ?, machine = ?, line = ?, category = ?,

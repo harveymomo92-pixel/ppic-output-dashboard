@@ -216,8 +216,8 @@ export function DashboardSidebar({ activeView, onChangeView, downtimePanel, onCh
       <SidebarHeader>
         <div className="brand-mark"><Factory size={18} /></div>
         <div className="brand-copy">
-          <strong>PPIC Output</strong>
-          <span>Dashboard Prototype</span>
+          <strong>Operasi Produksi</strong>
+          <span>Output, downtime, target</span>
         </div>
       </SidebarHeader>
 

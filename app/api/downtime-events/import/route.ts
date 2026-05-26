@@ -15,6 +15,45 @@ const allowedStatuses = new Set(['open', 'monitoring', 'closed']);
 const allowedCategories = new Set(['setup', 'machine-trouble', 'material', 'mould', 'electrical', 'qc-hold', 'waiting-order', 'cleaning', 'minor-stop', 'other']);
 const execFileAsync = promisify(execFile);
 
+type ImportConflictKind = 'internal' | 'existing' | 'overlap';
+type ImportConflict = {
+  kind: ImportConflictKind;
+  row_index: number;
+  event_date: string;
+  shift_code: string;
+  area: string;
+  machine: string;
+  line: string;
+  category: string;
+  start_time: string;
+  end_time: string;
+  reason: string;
+  duplicate_key?: string;
+  existing_id?: number;
+  existing_start_time?: string;
+  existing_end_time?: string;
+};
+
+type ImportPreview = {
+  mode: 'append' | 'replace';
+  file_name: string;
+  total_rows: number;
+  valid_rows: number;
+  skipped_rows: number;
+  unique_rows: number;
+  inserted_rows: number;
+  updated_rows: number;
+  existing_rows: number;
+  replace_rows: number;
+  internal_duplicate_count: number;
+  existing_match_count: number;
+  overlap_count: number;
+  review_required: boolean;
+  can_proceed: boolean;
+  notes: string[];
+  conflicts: ImportConflict[];
+};
+
 const fieldAliases = {
   event_date: ['event_date', 'event date', 'tanggal'],
   shift_code: ['shift_code', 'shift code', 'shift'],
@@ -58,6 +97,43 @@ function minutesBetween(eventDate: string, startTime: string, endTime: string) {
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
   if (end < start) end = new Date(end.getTime() + 86400000);
   return Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+}
+
+function parseMinutes(value: string) {
+  const [hours = '0', minutes = '0'] = value.split(':');
+  const parsedHours = Number(hours);
+  const parsedMinutes = Number(minutes);
+  if (!Number.isFinite(parsedHours) || !Number.isFinite(parsedMinutes)) return 0;
+  return parsedHours * 60 + parsedMinutes;
+}
+
+function downtimeNaturalKey(row: Pick<ReturnType<typeof normalizeDowntimeRow>, 'event_date' | 'shift_code' | 'area' | 'machine' | 'line' | 'category' | 'start_time' | 'end_time'>) {
+  return [
+    row.event_date,
+    row.shift_code,
+    row.area,
+    row.machine,
+    row.line,
+    row.category,
+    row.start_time,
+    row.end_time,
+  ].map((value) => clean(value)).join('|');
+}
+
+function hasTimeOverlap(leftStart: string, leftEnd: string, rightStart: string, rightEnd: string) {
+  if (!leftStart || !leftEnd || !rightStart || !rightEnd) return false;
+  const leftStartMin = parseMinutes(leftStart);
+  const leftEndMin = parseMinutes(leftEnd);
+  const rightStartMin = parseMinutes(rightStart);
+  const rightEndMin = parseMinutes(rightEnd);
+  if ([leftStartMin, leftEndMin, rightStartMin, rightEndMin].some((value) => Number.isNaN(value))) return false;
+  return leftStartMin < rightEndMin && rightStartMin < leftEndMin;
+}
+
+function chunk<T>(values: T[], size: number) {
+  const out: T[][] = [];
+  for (let index = 0; index < values.length; index += size) out.push(values.slice(index, index + size));
+  return out;
 }
 
 async function readXlsxRows(file: File) {
@@ -187,10 +263,170 @@ function normalizeDowntimeRow(row: DowntimeRow) {
   };
 }
 
+function collectDowntimePreview(db: ReturnType<typeof getDb>, normalizedRows: ReturnType<typeof normalizeDowntimeRow>[], mode: 'append' | 'replace', fileName: string) {
+  const validRows = normalizedRows.filter((row) => row.event_date && row.machine && row.category && row.start_time && row.end_time);
+  const skippedRows = normalizedRows.length - validRows.length;
+  const seenKeys = new Map<string, number>();
+  const conflicts: ImportConflict[] = [];
+  let internalDuplicateCount = 0;
+
+  const rowsWithMeta = validRows.map((row, index) => ({
+    row,
+    index,
+    key: downtimeNaturalKey(row),
+  }));
+
+  for (const entry of rowsWithMeta) {
+    const firstSeen = seenKeys.get(entry.key);
+    if (firstSeen !== undefined) {
+      internalDuplicateCount += 1;
+      conflicts.push({
+        kind: 'internal',
+        row_index: entry.index,
+        event_date: entry.row.event_date,
+        shift_code: entry.row.shift_code,
+        area: entry.row.area,
+        machine: entry.row.machine,
+        line: entry.row.line,
+        category: entry.row.category,
+        start_time: entry.row.start_time,
+        end_time: entry.row.end_time,
+        reason: `Duplikat dengan baris ${firstSeen + 1} pada file yang sama`,
+        duplicate_key: entry.key,
+      });
+      continue;
+    }
+    seenKeys.set(entry.key, entry.index);
+  }
+
+  const eventDates = Array.from(new Set(rowsWithMeta.map((entry) => entry.row.event_date).filter(Boolean))).sort();
+  const existingRows = eventDates.length
+    ? chunk(eventDates, 250).flatMap((dateChunk) => db.prepare(`
+        SELECT id, event_date, shift_code, area, machine, line, category, start_time, end_time
+        FROM downtime_events
+        WHERE event_date IN (${dateChunk.map(() => '?').join(',')})
+      `).all(...dateChunk) as Array<{
+        id: number;
+        event_date: string;
+        shift_code: string;
+        area: string;
+        machine: string;
+        line: string;
+        category: string;
+        start_time: string;
+        end_time: string;
+      }>)
+    : [];
+
+  const existingByKey = new Map<string, typeof existingRows[number]>();
+  const existingByWindow = new Map<string, typeof existingRows>();
+  for (const existing of existingRows) {
+    const key = downtimeNaturalKey(existing);
+    existingByKey.set(key, existing);
+    const windowKey = [existing.event_date, existing.shift_code, existing.machine].map((value) => clean(value)).join('|');
+    const list = existingByWindow.get(windowKey) ?? [];
+    list.push(existing);
+    existingByWindow.set(windowKey, list);
+  }
+
+  let existingMatchCount = 0;
+  let overlapCount = 0;
+  for (const entry of rowsWithMeta) {
+    const existing = existingByKey.get(entry.key);
+    if (existing && mode !== 'replace') {
+      existingMatchCount += 1;
+      conflicts.push({
+        kind: 'existing',
+        row_index: entry.index,
+        event_date: entry.row.event_date,
+        shift_code: entry.row.shift_code,
+        area: entry.row.area,
+        machine: entry.row.machine,
+        line: entry.row.line,
+        category: entry.row.category,
+        start_time: entry.row.start_time,
+        end_time: entry.row.end_time,
+        reason: `Akan update row existing #${existing.id} pada natural key yang sama`,
+        duplicate_key: entry.key,
+        existing_id: existing.id,
+        existing_start_time: existing.start_time,
+        existing_end_time: existing.end_time,
+      });
+    }
+
+    const windowKey = [entry.row.event_date, entry.row.shift_code, entry.row.machine].map((value) => clean(value)).join('|');
+    const candidates = existingByWindow.get(windowKey) ?? [];
+    for (const candidate of candidates) {
+      if (candidate.id === existing?.id) continue;
+      if (!hasTimeOverlap(entry.row.start_time, entry.row.end_time, candidate.start_time, candidate.end_time)) continue;
+      overlapCount += 1;
+      conflicts.push({
+        kind: 'overlap',
+        row_index: entry.index,
+        event_date: entry.row.event_date,
+        shift_code: entry.row.shift_code,
+        area: entry.row.area,
+        machine: entry.row.machine,
+        line: entry.row.line,
+        category: entry.row.category,
+        start_time: entry.row.start_time,
+        end_time: entry.row.end_time,
+        reason: `Overlap dengan row existing #${candidate.id} pada jam ${candidate.start_time}-${candidate.end_time}`,
+        existing_id: candidate.id,
+        existing_start_time: candidate.start_time,
+        existing_end_time: candidate.end_time,
+      });
+      break;
+    }
+  }
+
+  const uniqueRows = seenKeys.size;
+  const insertedRows = mode === 'replace' ? uniqueRows : Math.max(0, uniqueRows - existingMatchCount);
+  const updatedRows = mode === 'replace' ? 0 : existingMatchCount;
+  const existingCount = mode === 'replace' ? existingRows.length : existingMatchCount;
+  const replaceRows = mode === 'replace' ? existingRows.length : 0;
+  const reviewRequired = internalDuplicateCount > 0 || overlapCount > 0 || (mode === 'replace' && existingRows.length > 0);
+  const canProceed = internalDuplicateCount === 0 && overlapCount === 0 && validRows.length > 0;
+  const notes = [
+    `${validRows.length} row valid, ${skippedRows} row di-skip karena field wajib belum lengkap.`,
+    mode === 'replace'
+      ? `Replace mode akan menghapus ${existingRows.length} row existing sebelum insert batch baru.`
+      : existingMatchCount
+        ? `${existingMatchCount} row akan update existing lewat natural key.`
+        : 'Tidak ada row existing yang cocok dengan natural key file ini.',
+  ];
+  if (internalDuplicateCount) notes.push(`${internalDuplicateCount} duplikat internal harus dibersihkan sebelum save.`);
+  if (overlapCount) notes.push(`${overlapCount} overlap waktu terdeteksi pada mesin/shift yang sama.`);
+
+  return {
+    preview: {
+      mode,
+      file_name: fileName,
+      total_rows: normalizedRows.length,
+      valid_rows: validRows.length,
+      skipped_rows: skippedRows,
+      unique_rows: uniqueRows,
+      inserted_rows: insertedRows,
+      updated_rows: updatedRows,
+      existing_rows: existingCount,
+      replace_rows: replaceRows,
+      internal_duplicate_count: internalDuplicateCount,
+      existing_match_count: existingMatchCount,
+      overlap_count: overlapCount,
+      review_required: reviewRequired,
+      can_proceed: canProceed,
+      notes,
+      conflicts: conflicts.slice(0, 50),
+    } satisfies ImportPreview,
+    validRows,
+  };
+}
+
 export async function POST(request: NextRequest) {
   const formData = await request.formData();
   const file = formData.get('file');
   const mode = value(formData.get('mode') || 'append').toLowerCase();
+  const dryRun = ['1', 'true', 'yes'].includes(value(formData.get('dryRun') || formData.get('dry_run')).toLowerCase());
 
   if (!(file instanceof File)) {
     return NextResponse.json({ error: 'File CSV wajib di-upload.' }, { status: 400 });
@@ -216,12 +452,37 @@ export async function POST(request: NextRequest) {
     rows = (await readXlsxRows(file)).filter((row) => row && Object.keys(row).length);
   }
 
-  const normalizedRows = rows.map(normalizeDowntimeRow).filter((row) => row.event_date && row.machine && row.category && row.start_time && row.end_time);
+  const normalizedRows = rows.map(normalizeDowntimeRow);
 
   const db = getDb();
   try {
+    const analysis = collectDowntimePreview(db, normalizedRows, mode as 'append' | 'replace', file.name || 'downtime-import');
+    const preview = analysis.preview;
+    if (dryRun) {
+      return NextResponse.json({
+        data: {
+          source: file.name,
+          mode,
+          dryRun: true,
+          processedRows: preview.total_rows,
+          savedRows: 0,
+          insertedRows: preview.inserted_rows,
+          updatedRows: preview.updated_rows,
+          existingRows: preview.existing_rows,
+          skippedRows: preview.skipped_rows,
+          total: preview.valid_rows,
+          sample: [],
+          preview,
+          message: preview.review_required
+            ? `preview ${isXlsx ? 'XLSX' : 'CSV'} butuh review (${preview.conflicts.length} conflict/duplicate)`
+            : `preview ${isXlsx ? 'XLSX' : 'CSV'} siap lanjut (${preview.valid_rows} row valid)`,
+        },
+      });
+    }
+
     db.exec('BEGIN');
     try {
+      const insertRows = analysis.validRows;
       if (mode === 'replace') db.exec('DELETE FROM downtime_events');
 
       const insert = db.prepare(`
@@ -243,7 +504,7 @@ export async function POST(request: NextRequest) {
 
       let savedRows = 0;
       let skippedRows = 0;
-      for (const row of normalizedRows) {
+      for (const row of insertRows) {
         const result = insert.run(
           row.event_date,
           row.shift_code,
@@ -276,11 +537,11 @@ export async function POST(request: NextRequest) {
         isXlsx ? 'xlsx' : 'csv',
         mode,
         'success',
-        rows.length,
+        preview.total_rows,
         savedRows,
-        savedRows,
-        0,
-        0,
+        preview.inserted_rows,
+        preview.updated_rows,
+        preview.existing_rows,
         skippedRows,
         total.count,
         `${mode === 'replace' ? 'replace' : 'append'} import ${isXlsx ? 'XLSX' : 'CSV'} ok (${savedRows} saved, ${skippedRows} skip)`,
@@ -291,12 +552,17 @@ export async function POST(request: NextRequest) {
         data: {
           source: file.name,
           mode,
-          processedRows: rows.length,
+          dryRun: false,
+          processedRows: preview.total_rows,
           savedRows,
+          insertedRows: preview.inserted_rows,
+          updatedRows: preview.updated_rows,
+          existingRows: preview.existing_rows,
           skippedRows,
           total: total.count,
           sample,
           message: `${mode === 'replace' ? 'downtime replace' : 'downtime backfill'} ok (${savedRows} row tersimpan, ${skippedRows} skip)`,
+          preview,
         },
       });
     } catch (error) {

@@ -1,4 +1,4 @@
-# PPIC Output Dashboard — Runbook
+# Operasi Produksi — Runbook
 
 ## Prototype stack
 
@@ -167,13 +167,23 @@ npm run start
 
 `npm audit` currently reports moderate advisories from the installed Next.js/PostCSS chain. `npm audit fix --force` is not recommended because npm suggests a breaking downgrade. Recheck after dependency updates.
 
+`npm run build` on this host can fail with `ERR_WORKER_INIT_FAILED` / `EAGAIN` when the machine is short on pthread capacity. If that happens, treat `npm run typecheck` as the local code-safety check and retry build only after load drops.
+
 ## If resuming work
 
-Start from the smallest useful next step:
+Start from the P0/P1 backlog in `docs/tasks.md`.
 
-1. Improve first-time user guidance and sidebar clarity.
-2. Harden downtime import flow with preview, conflict handling, and staged merge.
-3. Add parser/import regression fixtures before expanding behavior.
-4. Polish mobile ergonomics after the core flow feels stable.
+P0 order:
+
+1. Staged merge downtime yang aman.
+2. Performance untuk data besar.
+3. Mobile-first untuk tabel padat.
+4. Regression safety net inti.
+
+Setelah P0 stabil, lanjut P1:
+
+1. Observability yang lebih operasional.
+2. Data quality guardrail.
+3. Cache analitik besar.
 
 This order keeps the dashboard easy to continue from a fresh session without reopening all the docs.
