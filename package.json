@@ -7,7 +7,7 @@
     "dev:live": "bash ./scripts/run-dev-live.sh",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test:wa-parser": "node scripts/test-wa-parser.mjs",
     "test:observability": "node scripts/test-observability.mjs",

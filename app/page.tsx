@@ -2209,7 +2209,6 @@ export default function Home() {
       .catch((error) => console.error(error))
       .finally(() => { if (cancelled) return; });
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -2224,6 +2223,7 @@ export default function Home() {
     if (typeof window === 'undefined') return;
     setDowntimeWaAliasOverrides(readDowntimeWaAliases());
     setDowntimeWaAliasHistory(readDowntimeWaAliasHistory());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -2385,10 +2385,9 @@ export default function Home() {
       })
       .then((payload) => {
         if (!cancelled) setCompareSummary({ previousRange: prevRange, kpis: payload.kpis ?? emptyDashboard.kpis, targetPerformance: payload.targetPerformance ?? [] });
-      })
-      .catch((error) => console.error(error));
+    })
+    .catch((error) => console.error(error));
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters, activeView, filters.dateFrom, filters.dateTo]);
 
   useEffect(() => {
@@ -2405,10 +2404,9 @@ export default function Home() {
       })
       .then((payload) => {
         if (!cancelled) setLocalTrendRows(payload.trend ?? []);
-      })
-      .catch((error) => console.error(error));
+    })
+    .catch((error) => console.error(error));
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters, trendLocalFilters, activeView]);
 
   const options = dashboard.options;
@@ -3507,7 +3505,7 @@ export default function Home() {
                         <thead><tr><th>Prioritas Mesin</th><th>Signal</th><th className="num">Gap Output</th><th className="num">Estimasi Jam</th><th className="num">Reject</th><th>Event Terkait</th><th>Catatan</th><th>Aksi</th></tr></thead>
                         <tbody>{downtimeAttentionRows.length ? downtimeAttentionRows.map((row) => {
                           const linked = downtimeEventsByMachine.get(normalizeCode(row.machine));
-                          return <tr key={`${row.area}-${row.machine}`} className={`downtime-signal-${row.signalType}`}><td><div className="machine-product-cell"><strong>{row.machine}</strong><span>{row.area}</span></div></td><td><span className={`status-badge ${row.status}`}>{downtimeSignalLabel(row.signalType)}</span></td><td className="num">{numberFmt.format(Math.round(row.estimatedLossQty))}</td><td className="num">{decimalFmt.format(row.estimatedDowntimeHours)}</td><td className="num">{decimalFmt.format(row.rejectRatePct)}%</td><td>{linked ? <><strong>{linked.total} event</strong><br/><span className="muted">Open {linked.open} · Monitor {linked.monitoring} · {decimalFmt.format(linked.minutes)} menit</span></> : <span className="muted">Belum ada event</span>}</td><td>{row.note}</td><td><button className="btn secondary table-mini-btn" type="button" onClick={() => pickDowntimeSignal(row)}>Input downtime</button></td></tr>;
+                          return <tr key={row.ui_id} className={`downtime-signal-${row.signalType}`}><td><div className="machine-product-cell"><strong>{row.machine}</strong><span>{row.area}</span></div></td><td><span className={`status-badge ${row.status}`}>{downtimeSignalLabel(row.signalType)}</span></td><td className="num">{numberFmt.format(Math.round(row.estimatedLossQty))}</td><td className="num">{decimalFmt.format(row.estimatedDowntimeHours)}</td><td className="num">{decimalFmt.format(row.rejectRatePct)}%</td><td>{linked ? <><strong>{linked.total} event</strong><br/><span className="muted">Open {linked.open} · Monitor {linked.monitoring} · {decimalFmt.format(linked.minutes)} menit</span></> : <span className="muted">Belum ada event</span>}</td><td>{row.note}</td><td><button className="btn secondary table-mini-btn" type="button" onClick={() => pickDowntimeSignal(row)}>Input downtime</button></td></tr>;
                         }) : <tr><td colSpan={8}><div className="empty guided-empty table-empty"><strong>Belum ada mesin prioritas</strong><p>Data saat ini belum menunjukkan gap output/downtime. Jika filter terlalu sempit, coba ganti periode atau area.</p></div></td></tr>}</tbody>
                       </table>
                     </div>
