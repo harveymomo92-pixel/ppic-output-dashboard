@@ -1,14 +1,14 @@
-# PRD — PPIC Output Dashboard
+# PRD — Operasi Produksi
 
 ## 1. Overview
 
-PPIC Output Dashboard adalah dashboard internal untuk memonitor output produksi berdasarkan data Business Central OData V4 service `ItemLedgerPPIC`.
+Operasi Produksi adalah dashboard internal untuk memonitor operasi produksi berdasarkan data Business Central OData V4.
 
-Tahap awal menggunakan data `Entry_Type = Output` untuk 3 bulan terakhir. Dashboard ditujukan untuk membantu PPIC dan operasional melihat performa output harian, mesin, item, kategori, dan SPK secara cepat tanpa harus membuka data mentah Business Central/Excel.
+Tahap awal menggunakan data `Entry_Type = Output` untuk 3 bulan terakhir. Dashboard ditujukan untuk membantu operasional melihat performa output harian, mesin, item, kategori, dan SPK secara cepat tanpa harus membuka data mentah Business Central/Excel.
 
 ### Initial data profile
 
-- Service: `ItemLedgerPPIC`
+- Service: Business Central OData V4 output
 - Current extracted period: 2026-02-13 s/d 2026-05-12
 - Rows: 5,804
 - Total quantity: ±227.69 juta pcs
@@ -133,7 +133,7 @@ Streamlit Dashboard UI
 ### Future architecture with OData
 
 ```text
-Business Central OData V4: ItemLedgerPPIC
+Business Central OData V4: output source
         |
         | Basic Auth / secure env secrets
         v
@@ -165,7 +165,7 @@ sequenceDiagram
     alt Cache available
         Cache-->>Loader: Return cached dataset
     else Cache missing/stale
-        Loader->>OData: Fetch ItemLedgerPPIC Output data
+        Loader->>OData: Fetch output data
         OData-->>Loader: Return OData JSON pages
         Loader->>Cache: Save normalized dataset
     end
@@ -259,7 +259,7 @@ Example summaries:
 
 1. Explain trend changes.
 2. Detect anomalies such as zero-output days, sudden drops, duplicate/odd transactions, or unusual machine-item combinations.
-3. Generate PPIC daily/weekly summaries.
+3. Generate daily/weekly summaries.
 4. Suggest follow-up questions for planning analysis.
 
 ### Technical implementation & security
@@ -283,6 +283,6 @@ Example summaries:
 
 1. Should quantity be shown only in PCS, or mixed UOM must be normalized?
 2. Should AV/reject-like categories be included in output dashboard or separated?
-3. Which users will use it: PPIC only, production, management, or all?
+3. Which users will use it: production, management, or all?
 4. Do we need login/access control for dashboard?
 5. Preferred deployment location: this OpenClaw host, Windows server, or another internal machine?

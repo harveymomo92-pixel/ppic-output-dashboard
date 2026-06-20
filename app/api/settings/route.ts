@@ -21,7 +21,13 @@ export async function GET() {
     ORDER BY id DESC
     LIMIT 20
   `).all();
-  return NextResponse.json({ ok: true, settings: getSettings(), syncHistory });
+  const importHistory = db.prepare(`
+    SELECT id, source, import_kind, mode, parser_mode, ai_provider, created_at, status, processed_rows, saved_rows, inserted_rows, updated_rows, existing_rows, skipped_rows, total_rows, message
+    FROM downtime_import_runs
+    ORDER BY id DESC
+    LIMIT 20
+  `).all();
+  return NextResponse.json({ ok: true, settings: getSettings(), syncHistory, importHistory });
 }
 
 export async function POST(request: NextRequest) {

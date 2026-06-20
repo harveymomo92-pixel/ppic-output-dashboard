@@ -1,6 +1,7 @@
 'use client';
 
 import * as Collapsible from '@radix-ui/react-collapsible';
+import { useEffect, useMemo, useState } from 'react';
 import { BarChart3, ChevronDown, Clock3, Database, Download, Factory, FileText, Filter, Gauge, HardDrive, RefreshCw, RotateCcw, Search, Settings2, SplitSquareVertical, Upload, Workflow, Table2 } from 'lucide-react';
 import {
   Sidebar,
@@ -185,22 +186,38 @@ function SelectField({ label, value, options, allLabel, onChange }: { label: str
 }
 
 export function DashboardSidebar({ activeView, onChangeView, downtimePanel, onChangeDowntimePanel, settingsPanel, onChangeSettingsPanel, filters, onFiltersChange, onReset, onExport, options, dateRange, syncStatus, syncing, onSync, rowsCount, totalRowsCount, showFilters }: Props) {
-  const quickPresets = [
+  const [openSection, setOpenSection] = useState<'downtime' | 'settings' | null>(() => (
+    activeView === 'downtime' ? 'downtime' : activeView === 'compare-period' || activeView === 'master-entity' || activeView === 'settings' ? 'settings' : null
+  ));
+
+  const quickPresets = useMemo(() => [
     { id: 'this-month', label: 'Bulan Ini' },
     { id: 'last-month', label: 'Bulan Lalu' },
     { id: 'this-week', label: 'Minggu Ini' },
     { id: 'last-7-days', label: '7 Hari' },
     { id: 'today', label: 'Hari Ini' },
     { id: 'yesterday', label: 'Kemarin' },
-  ];
+  ], []);
+
+  useEffect(() => {
+    if (activeView === 'downtime') {
+      setOpenSection('downtime');
+      return;
+    }
+    if (activeView === 'compare-period' || activeView === 'master-entity' || activeView === 'settings') {
+      setOpenSection('settings');
+      return;
+    }
+    setOpenSection(null);
+  }, [activeView]);
 
   return (
     <Sidebar>
       <SidebarHeader>
         <div className="brand-mark"><Factory size={18} /></div>
         <div className="brand-copy">
-          <strong>PPIC Output</strong>
-          <span>Dashboard Prototype</span>
+          <strong>Operasi Produksi</strong>
+          <span>Output, downtime, target</span>
         </div>
       </SidebarHeader>
 
@@ -215,7 +232,7 @@ export function DashboardSidebar({ activeView, onChangeView, downtimePanel, onCh
               <SidebarMenuItem>
                 <SidebarMenuButton active={activeView === 'data-detail'} onClick={() => onChangeView('data-detail')}><Database size={17} /><span>Detail Data</span></SidebarMenuButton>
               </SidebarMenuItem>
-              <Collapsible.Root defaultOpen={false} className="group/collapsible downtime-section">
+              <Collapsible.Root open={openSection === 'downtime'} onOpenChange={(open) => setOpenSection(open ? 'downtime' : null)} className="group/collapsible downtime-section">
                 <SidebarMenuItem>
                   <Collapsible.Trigger asChild>
                     <SidebarMenuButton active={activeView === 'downtime'} onClick={() => onChangeView('downtime')}>
@@ -257,7 +274,7 @@ export function DashboardSidebar({ activeView, onChangeView, downtimePanel, onCh
                 </Collapsible.Content>
               </Collapsible.Root>
 
-              <Collapsible.Root defaultOpen={false} className="group/collapsible settings-section">
+              <Collapsible.Root open={openSection === 'settings'} onOpenChange={(open) => setOpenSection(open ? 'settings' : null)} className="group/collapsible settings-section">
                 <SidebarMenuItem>
                   <Collapsible.Trigger asChild>
                     <SidebarMenuButton active={activeView === 'compare-period' || activeView === 'master-entity' || activeView === 'settings'}>

@@ -21,6 +21,24 @@ export type ApiKeyCheckResult = {
 export type SettingsData = {
   settings: Record<string, SettingsField>;
   syncHistory: Array<{ id: number; source: string; started_at: string; finished_at: string | null; row_count: number; status: string; message: string | null }>;
+  importHistory: Array<{
+    id: number;
+    source: string;
+    import_kind: string;
+    mode: string;
+    parser_mode: string | null;
+    ai_provider: string | null;
+    created_at: string;
+    status: string;
+    processed_rows: number;
+    saved_rows: number;
+    inserted_rows: number;
+    updated_rows: number;
+    existing_rows: number;
+    skipped_rows: number;
+    total_rows: number;
+    message: string | null;
+  }>;
 };
 
 type Props = {
@@ -43,6 +61,24 @@ type Props = {
   downtimeEventsCount: number;
   latestSyncStatus?: string | null;
 };
+
+function formatHistoryTimestamp(value: string | null | undefined) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('id-ID', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function trimHistoryText(value: string | null | undefined, maxChars = 48) {
+  const text = String(value ?? '').trim();
+  if (!text) return '-';
+  return text.length > maxChars ? `${text.slice(0, Math.max(1, maxChars - 3))}...` : text;
+}
 
 function FieldList({
   title,
@@ -191,32 +227,112 @@ export function SettingsSection({
         ) : null}
 
         {settingsPanel === 'logs' ? (
-          <div className="table-wrap">
-            <div className="master-entity-head-actions" style={{ marginBottom: 12 }}>
+          <div className="settings-logs-grid">
+            <div className="settings-logs-actions">
               <button className="btn secondary" type="button" onClick={onSync} disabled={syncing}>{syncing ? 'Sinkronisasi...' : 'Jalankan Sync'}</button>
             </div>
-            {syncError ? <div className="card pad error-banner" style={{ marginBottom: 12, whiteSpace: 'pre-wrap' }}>{syncError}</div> : null}
-            {settingsData?.syncHistory?.length ? (
-              <table>
-                <thead>
-                  <tr>
-                    <th>Started</th><th>Finished</th><th>Source</th><th>Status</th><th>Rows</th><th>Message</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {settingsData.syncHistory.map((row) => (
-                    <tr key={row.id}>
-                      <td>{row.started_at || '-'}</td>
-                      <td>{row.finished_at || '-'}</td>
-                      <td>{row.source}</td>
-                      <td>{row.status}</td>
-                      <td>{numberFmt.format(row.row_count || 0)}</td>
-                      <td>{row.message || '-'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : <div className="empty guided-empty"><strong>Belum ada riwayat sync</strong><p>Klik Jalankan Sync untuk mengambil data terbaru, lalu hasilnya akan muncul di sini.</p></div>}
+            {syncError ? <div className="card pad error-banner" style={{ whiteSpace: 'pre-wrap' }}>{syncError}</div> : null}
+            <section className="settings-log-section">
+              <div className="chart-head">
+                <div>
+                  <h3>Riwayat Sync</h3>
+                  <p>Menunjukkan sumber sync, status akhir, dan pesan terakhir yang berguna untuk audit cepat.</p>
+                </div>
+              </div>
+              {settingsData?.syncHistory?.length ? (
+                <div className="table-wrap settings-history-wrap">
+                  <table className="settings-history-table">
+                    <thead>
+                      <tr>
+                        <th>Waktu</th>
+                        <th>Sumber</th>
+                        <th>Status</th>
+                        <th>Rows</th>
+                        <th>Catatan</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {settingsData.syncHistory.map((row) => (
+                        <tr key={`sync-${row.id}`}>
+                          <td data-label="Waktu">
+                            <div className="settings-history-stack">
+                              <strong>{formatHistoryTimestamp(row.started_at)}</strong>
+                              <span>Selesai {formatHistoryTimestamp(row.finished_at)}</span>
+                            </div>
+                          </td>
+                          <td data-label="Sumber" className="settings-history-cell">
+                            <span title={row.source}>{trimHistoryText(row.source, 18)}</span>
+                          </td>
+                          <td data-label="Status">
+                            <span className={`status-badge ${row.status === 'success' ? 'closed' : row.status === 'running' ? 'monitoring' : 'open'}`}>{row.status}</span>
+                          </td>
+                          <td data-label="Rows" className="num">{numberFmt.format(row.row_count || 0)}</td>
+                          <td data-label="Catatan" className="settings-history-note">
+                            <span title={row.message || '-'}>{trimHistoryText(row.message || '-', 56)}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : <div className="empty guided-empty"><strong>Belum ada riwayat sync</strong><p>Klik Jalankan Sync untuk mengambil data terbaru, lalu hasilnya akan muncul di sini.</p></div>}
+            </section>
+            <section className="settings-log-section">
+              <div className="chart-head">
+                <div>
+                  <h3>Riwayat Import Downtime</h3>
+                  <p>Menampilkan event import CSV, XLSX, dan Copas WA supaya penelusuran data dan rollback bisa lebih gampang.</p>
+                </div>
+              </div>
+              {settingsData?.importHistory?.length ? (
+                <div className="table-wrap settings-history-wrap">
+                  <table className="settings-history-table">
+                    <thead>
+                      <tr>
+                        <th>Waktu</th>
+                        <th>Sumber</th>
+                        <th>Info</th>
+                        <th>Status</th>
+                        <th>Hasil</th>
+                        <th>Catatan</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {settingsData.importHistory.map((row) => (
+                        <tr key={`import-${row.id}`}>
+                          <td data-label="Waktu">
+                            <div className="settings-history-stack">
+                              <strong>{formatHistoryTimestamp(row.created_at)}</strong>
+                              <span>{row.total_rows ? `${numberFmt.format(row.total_rows)} total row` : 'Riwayat import'}</span>
+                            </div>
+                          </td>
+                          <td data-label="Sumber" className="settings-history-cell">
+                            <span title={row.source}>{trimHistoryText(row.source, 18)}</span>
+                          </td>
+                          <td data-label="Info" className="settings-history-cell">
+                            <span title={`${row.import_kind} · ${row.mode}${row.parser_mode ? ` · ${row.parser_mode}` : ''}`}>
+                              {trimHistoryText(`${row.import_kind} · ${row.mode}${row.parser_mode ? ` · ${row.parser_mode}` : ''}`, 24)}
+                            </span>
+                          </td>
+                          <td data-label="Status">
+                            <span className={`status-badge ${row.status === 'success' ? 'closed' : 'open'}`}>{row.status}</span>
+                          </td>
+                          <td data-label="Hasil">
+                            <div className="settings-history-stack">
+                              <strong>{numberFmt.format(row.saved_rows || 0)} / {numberFmt.format(row.processed_rows || 0)}</strong>
+                              <span>Simpan / proses</span>
+                            </div>
+                          </td>
+                          <td data-label="Catatan" className="settings-history-note">
+                            <span title={row.message || '-'}>{trimHistoryText(row.message || '-', 48)}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : <div className="empty guided-empty"><strong>Belum ada riwayat import downtime</strong><p>Setiap CSV/XLSX atau Copas WA yang berhasil di-save akan muncul di sini sebagai audit trail.</p></div>}
+            </section>
           </div>
         ) : null}
 

@@ -98,9 +98,29 @@ Expected:
 - `match_code` menjelaskan header family yang dipakai
 - `source_line` tetap menyimpan ringkasan teks asli
 
+## Fixture 6 — Kondisi standby
+
+```text
+23 Mei 2026
+Shift 2
+HF 03
+Problem
+Waiting order
+```
+
+Expected:
+
+- row kondisi mesin tetap dibuat
+- `condition = standby`
+- `warning_code = state:standby`
+- `machine_match = family`
+- `match_code` tetap menjelaskan mapping machine master yang dipakai
+
 ## Fixture policy
 
 1. Fixture baru harus ditulis dengan format teks WA yang mendekati aslinya.
 2. Setiap fixture downtime idealnya punya expected `match_code`, `warning_code`, dan `condition`.
 3. Kalau parser diubah, fixture ini harus diperiksa ulang sebelum behavior dianggap stabil.
 4. Fixture produksi boleh tetap manual-only sampai format sampelnya benar-benar cukup untuk parser runtime.
+5. `scripts/test-wa-parser.mjs` adalah gate regression yang sebaiknya dijalankan sebelum parser WA diubah.
+6. `npm run test:observability` dipakai sebagai smoke check untuk kontrak observability settings/logs.

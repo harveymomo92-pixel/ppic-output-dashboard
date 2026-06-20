@@ -16,7 +16,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { Activity, FileText, PackageSearch } from 'lucide-react';
+import { Activity, Eye, EyeOff, FileText, PackageSearch } from 'lucide-react';
 import { decimalFmt, numberFmt } from '@/lib/dashboard';
 import type { DashboardFilters } from '@/components/dashboard/dashboard-sidebar';
 
@@ -58,13 +58,12 @@ function MetricPill({ label, value, hint }: { label: string; value: string; hint
   );
 }
 
-function ChartCard({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
+function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="card chart-card">
       <div className="chart-head">
         <div>
           <h2>{title}</h2>
-          {subtitle ? <p>{subtitle}</p> : null}
         </div>
       </div>
       {children}
@@ -133,6 +132,26 @@ function makeSparsePercentLabel(totalPoints: number, fill: string) {
 }
 
 type TrendLocalFilters = { area: string; machine: string };
+
+const onboardingStorageKey = 'ppic-overview-onboarding-hidden';
+
+const onboardingSteps = [
+  {
+    title: 'Pilih periode dan filter',
+    text: 'Mulai dari sidebar kiri: tanggal, area, mesin, line, atau kategori. Kalau butuh cepat, pakai preset Bulan Ini atau 7 Hari.',
+    tag: 'Langkah 1',
+  },
+  {
+    title: 'Baca KPI dan chart utama',
+    text: 'Angka target, pencapaian, dan reject menunjukkan kondisi terkini. Grafik di bawahnya dipakai untuk melihat pola harian dan top contributor.',
+    tag: 'Langkah 2',
+  },
+  {
+    title: 'Drill-down ke detail',
+    text: 'Klik bar atau tabel untuk lompat ke detail harian. Kalau mau kerja gangguan produksi, pindah ke menu Gangguan Produksi dari sidebar.',
+    tag: 'Langkah 3',
+  },
+] as const;
 
 export function OverviewSection({
   activeView,
@@ -215,34 +234,82 @@ export function OverviewSection({
 }) {
   const trendAchievementLabel = useMemo(() => makeSparsePercentLabel(trend.length, '#5B7FC2'), [trend.length]);
   const trendRejectLabel = useMemo(() => makeSparsePercentLabel(trend.length, '#C26B5B'), [trend.length]);
+  const [onboardingHidden, setOnboardingHidden] = useState(false);
+  const [onboardingReady, setOnboardingReady] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(onboardingStorageKey);
+      setOnboardingHidden(saved === '1');
+    } catch {
+      setOnboardingHidden(false);
+    }
+    setOnboardingReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!onboardingReady) return;
+    try {
+      window.localStorage.setItem(onboardingStorageKey, onboardingHidden ? '1' : '0');
+    } catch {
+      // Ignore storage failures and keep the UI functional.
+    }
+  }, [onboardingHidden, onboardingReady]);
 
   return (
     <>
       {activeView === 'overview' ? (
       <>
-      <section className="card pad quick-start-card">
-        <div className="chart-head quick-start-head">
-          <div>
-            <h2>Mulai dari sini</h2>
-            <p>Kalau baru pertama buka, ikuti 3 langkah ini dulu.</p>
+      {onboardingHidden ? (
+        <div className="onboarding-compact-rail">
+          <div className="onboarding-compact-copy">
+            <strong>Quick start disembunyikan</strong>
+            <span>Tekan tampilkan kalau perlu lihat alur kerja singkat lagi.</span>
           </div>
+          <button
+            className="btn secondary onboarding-toggle-btn"
+            type="button"
+            onClick={() => setOnboardingHidden(false)}
+          >
+            <Eye size={16} />
+            Tampilkan
+          </button>
         </div>
-        <div className="quick-start-grid">
-          <div className="quick-start-step">
-            <strong>1. Pilih periode</strong>
-            <span>Pakai filter kiri untuk tanggal, area, atau mesin.</span>
+      ) : (
+        <section className="card pad onboarding-card">
+          <div className="chart-head onboarding-head">
+            <div>
+              <h2>Mulai dari sini</h2>
+              <p>Kalau baru buka dashboard, ikuti tiga langkah ini dulu supaya langsung sampai ke insight yang dipakai kerja.</p>
+            </div>
+            <div className="onboarding-head-actions">
+              <div className="onboarding-chip">3 langkah</div>
+              <button
+                className="btn ghost onboarding-toggle-btn"
+                type="button"
+                onClick={() => setOnboardingHidden(true)}
+                aria-label="Sembunyikan quick start"
+                title="Sembunyikan quick start"
+              >
+                <EyeOff size={16} />
+                Sembunyikan
+              </button>
+            </div>
           </div>
-          <div className="quick-start-step">
-            <strong>2. Lihat ringkasan</strong>
-            <span>KPI dan grafik utama langsung menunjukkan kondisi produksi.</span>
+          <div className="onboarding-grid">
+            {onboardingSteps.map((step) => (
+              <div key={step.title} className="onboarding-step">
+                <div className="onboarding-step-tag">{step.tag}</div>
+                <strong>{step.title}</strong>
+                <span>{step.text}</span>
+              </div>
+            ))}
           </div>
-          <div className="quick-start-step">
-            <strong>3. Buka detail</strong>
-            <span>Klik grafik atau tabel untuk melihat mesin, item, dan tindak lanjut.</span>
+          <div className="onboarding-footnote">
+            Istilah singkat: <strong>Pencapaian</strong> = output dibanding target, <strong>Reject</strong> = produk yang tidak lolos, <strong>Downtime</strong> = mesin berhenti atau gangguan.
           </div>
-        </div>
-        <div className="quick-start-note">Istilah singkat: <strong>Pencapaian</strong> = hasil dibanding target, <strong>Reject</strong> = produk tidak lolos, <strong>Downtime</strong> = mesin berhenti / gangguan.</div>
-      </section>
+        </section>
+      )}
 
       <div className="kpis">
         <div className="card kpi"><div className="label"><PackageSearch size={16}/>Target</div><div className="value">{numberFmt.format(totalTargetPcs)}</div><div className="hint">Target sesuai filter aktif</div></div>
@@ -255,7 +322,7 @@ export function OverviewSection({
       {loading ? <div className="card pad">Loading data...</div> : null}
 
       <div className="overview-trend-wide">
-        <ChartCard title="Trend Harian" subtitle="Output harian tampil sebagai bar, lalu pencapaian dan reject sebagai garis. Garis putus-putus 100% adalah batas target.">
+        <ChartCard title="Trend Harian">
           <div className="detail-table-toolbar trend-local-toolbar">
             <div className="detail-table-toolbar-group trend-local-toolbar-main">
               <select className="local-filter-select" value={trendLocalFilters.area} onChange={(e) => setTrendLocalFilters((current) => ({ ...current, area: e.target.value, machine: '' }))}>
@@ -302,22 +369,22 @@ export function OverviewSection({
       </div>
 
       <div className="overview-chart-grid">
-        <ChartCard title="Top Mesin" subtitle="Klik bar untuk buka detail mesin">
+        <ChartCard title="Top Mesin">
           <ChartFrame>
             <ResponsiveContainer width="100%" height="100%"><BarChart data={byMachine} layout="vertical" margin={{ left: 18, right: 18, top: 12, bottom: 4 }}><CartesianGrid strokeDasharray="3 3" /><XAxis type="number" tickFormatter={(v) => numberFmt.format(Number(v) / 1_000_000) + ' jt'} /><YAxis type="category" dataKey="name" width={120} tick={renderYAxisTick(18)} /><Tooltip content={(props) => <ChartTooltip {...props} formatter={(value: any) => numberFmt.format(Number(value))} />} /><Bar dataKey="value" fill="#8C877D" radius={[0, 4, 4, 0]} cursor="pointer" onClick={(data: any) => data?.name && openDetailDrilldown({ machine: String(data.name), search: '' })}><LabelList content={BarValueLabel} /></Bar></BarChart></ResponsiveContainer>
           </ChartFrame>
         </ChartCard>
-        <ChartCard title="Top Item" subtitle="Klik bar untuk cari item">
+        <ChartCard title="Top Item">
           <ChartFrame>
             <ResponsiveContainer width="100%" height="100%"><BarChart data={byItem} layout="vertical" margin={{ left: 18, right: 18, top: 12, bottom: 4 }}><CartesianGrid strokeDasharray="3 3" /><XAxis type="number" tickFormatter={(v) => numberFmt.format(Number(v) / 1_000_000) + ' jt'} /><YAxis type="category" dataKey="name" width={132} tick={renderYAxisTick(20)} /><Tooltip content={(props) => <ChartTooltip {...props} formatter={(value: any) => numberFmt.format(Number(value))} />} labelFormatter={(label: any) => String(label ?? '')} /><Bar dataKey="value" fill="#8C877D" radius={[0, 4, 4, 0]} cursor="pointer" onClick={(data: any) => data?.name && openDetailDrilldown({ search: String(data.name), machine: '' })}><LabelList content={BarValueLabel} /></Bar></BarChart></ResponsiveContainer>
           </ChartFrame>
         </ChartCard>
-        <ChartCard title="Kategori Item" subtitle="Klik bar untuk cari kategori">
+        <ChartCard title="Kategori Item">
           <ChartFrame>
             <ResponsiveContainer width="100%" height="100%"><BarChart data={byCategory} layout="vertical" margin={{ left: 18, right: 18, top: 12, bottom: 4 }}><CartesianGrid strokeDasharray="3 3" /><XAxis type="number" tickFormatter={(v) => numberFmt.format(Number(v) / 1_000_000) + ' jt'} width={56} /><YAxis type="category" dataKey="name" width={132} tick={renderYAxisTick(18)} /><Tooltip content={(props) => <ChartTooltip {...props} formatter={(value: any) => numberFmt.format(Number(value))} />} /><Bar dataKey="value" fill="#8C877D" radius={[0, 4, 4, 0]} cursor="pointer" onClick={(data: any) => data?.name && openDetailDrilldown({ search: String(data.name), machine: '' })}><LabelList content={BarValueLabel} /></Bar></BarChart></ResponsiveContainer>
           </ChartFrame>
         </ChartCard>
-        <ChartCard title="Reject per Mesin" subtitle="Klik bar untuk buka mesin terkait">
+        <ChartCard title="Reject per Mesin">
           <ChartFrame>
             <ResponsiveContainer width="100%" height="100%"><BarChart data={rejectRateByLine} layout="vertical" margin={{ left: 18, right: 38, top: 12, bottom: 4 }}><CartesianGrid strokeDasharray="3 3" /><XAxis type="number" tickFormatter={(v) => `${decimalFmt.format(Number(v))}%`} domain={[0, rejectRateAxisMax]} /><YAxis type="category" dataKey="name" width={140} tick={renderYAxisTick(20)} /><Tooltip content={(props) => <ChartTooltip {...props} formatter={(value: any) => formatPercent(Number(value))} />} /><Bar dataKey="value" fill="#C26B5B" radius={[0, 4, 4, 0]} cursor="pointer" onClick={(data: any) => data?.name && openDetailDrilldown({ machine: String(data.name), search: '' })}><LabelList content={PercentBarLabel} /></Bar></BarChart></ResponsiveContainer>
           </ChartFrame>
@@ -430,7 +497,7 @@ export function OverviewSection({
 
       {activeView === 'downtime' && downtimePanel === 'analysis' ? (
         <div className="overview-chart-grid downtime-chart-grid">
-          <ChartCard title="Estimasi Loss Output per Mesin" subtitle="Ranking mesin yang paling layak dicek dulu.">
+        <ChartCard title="Estimasi Loss Output per Mesin">
             <ChartFrame variant="tall" >
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={downtimeLossChartRows || []} layout="vertical" margin={{ left: 18, right: 42, top: 12, bottom: 4 }}>
