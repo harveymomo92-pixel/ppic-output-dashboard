@@ -148,6 +148,8 @@ function resolveMachineLabel(row: LedgerRow, masterByDescription: Map<string, Ma
   return clean(master?.display_laporan || row.prod_line_description);
 }
 
+const THERMOFORMING_GW_GT_12_THRESHOLD = 0.012;
+
 function inferTargetType(row: LedgerRow, docTargetTypes?: Map<string, string>) {
   const docTargetType = docTargetTypes?.get(normalizeCode(row.document_no));
   if (docTargetType) return docTargetType;
@@ -165,7 +167,8 @@ function inferTargetType(row: LedgerRow, docTargetTypes?: Map<string, string>) {
   }
 
   if (line.includes('THERMO') || category.includes('THERMO')) {
-    return num(row.gross_weight) > 0.012 ? 'target_thermoforming_gw_gt_12' : 'target_thermoforming';
+    // Treat 12 gram exactly as the "gw > 12" bucket requested by the business rule.
+    return num(row.gross_weight) >= THERMOFORMING_GW_GT_12_THRESHOLD ? 'target_thermoforming_gw_gt_12' : 'target_thermoforming';
   }
 
   return 'target_botol_preform';
